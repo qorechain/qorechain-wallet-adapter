@@ -13,7 +13,7 @@ adapter does. The design is what makes it drop-in:
 > that body before the wallet signs it**. So `wallet.signDirect(...)` works
 > exactly as it does for any Cosmos chain — it has no idea PQC is involved.
 
-The ML-DSA part uses [`@qorechain/pqc`](../qorechain-pqc) — the same FIPS-204
+The ML-DSA part uses [`@qorechain/pqc`](https://github.com/qorechain/qorechain-pqc) — the same FIPS-204
 implementation the chain itself was migrated to, so the signatures are
 byte-compatible and verify in the chain's ante. (Before that migration this was
 impossible: the chain ran a non-standard Dilithium variant no JS lib could match.)

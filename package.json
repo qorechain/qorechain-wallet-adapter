@@ -36,5 +36,13 @@
   "peerDependencies": {
     "@cosmjs/proto-signing": "^0.32.0",
     "@cosmjs/stargate": "^0.32.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qorechain/qorechain-wallet-adapter.git"
+  },
+  "homepage": "https://github.com/qorechain/qorechain-wallet-adapter#readme",
+  "bugs": {
+    "url": "https://github.com/qorechain/qorechain-wallet-adapter/issues"
   }
 }
