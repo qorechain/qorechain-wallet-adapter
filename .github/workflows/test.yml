@@ -14,4 +14,7 @@ jobs:
       - uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
         with:
           node-version: '22'
+      # sign-hybrid.test.mjs needs @qorechain/pqc (>=0.1.1, deterministic sign),
+      # cosmjs-types and the @noble/post-quantum devDependency.
+      - run: npm install
       - run: npm test
