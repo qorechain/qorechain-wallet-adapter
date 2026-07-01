@@ -24,6 +24,11 @@
 import { mldsa, shake256 } from '@qorechain/pqc';
 import { frame, encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 } from './framing.js';
 export { frame, encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 };
+// Phantom / any-ed25519-wallet support: drive the one unified account from Phantom.
+export {
+  base58Encode, base58Decode, SYSTEM_PROGRAM_ID, systemTransferData,
+  authSignBytes, buildPhantomSvmEnvelope, buildPhantomTransfer, registerAuthenticatorMsg,
+} from './phantom.js';
 import { TxBody, AuthInfo, TxRaw, SignerInfo, ModeInfo, Fee } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
 import { SignMode } from 'cosmjs-types/cosmos/tx/signing/v1beta1/signing.js';
 import { SignDoc } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
@@ -106,8 +111,9 @@ export function qoreChainInfo({ chainId = 'qorechain-diana', rpc, rest } = {}) {
     currencies: [{ coinDenom: 'QOR', coinMinimalDenom: 'uqor', coinDecimals: 6 }],
     feeCurrencies: [{
       coinDenom: 'QOR', coinMinimalDenom: 'uqor', coinDecimals: 6,
-      // matches the chain's minimum-gas-prices (0.001uqor); avg/high give headroom
-      gasPriceStep: { low: 0.001, average: 0.0025, high: 0.004 },
+      // MUST be >= the chain's feemarket min_gas_price (0.1 uqor/gas). A lower
+      // value (e.g. 0.001) makes wallets build txs the fee floor rejects.
+      gasPriceStep: { low: 0.1, average: 0.15, high: 0.25 },
     }],
     stakeCurrency: { coinDenom: 'QOR', coinMinimalDenom: 'uqor', coinDecimals: 6 },
     features: ['cosmwasm'],
