@@ -85,3 +85,30 @@ await fetch(`${rpc}`, { method:'POST', body: JSON.stringify({
 ## License
 
 Apache-2.0
+
+## Unified wallet generation (all 3 addresses)
+
+Every account is one 20-byte identity rendered as three encodings that share a
+single on-chain balance. Generate an eth-native wallet and get all three at once,
+plus the ML-DSA-87 (Dilithium-5) key for the PQC-hybrid Cosmos ante:
+
+```js
+import { generateQoreWallet, walletFromMnemonic } from "@qorechain/wallet-adapter";
+
+const w = await generateQoreWallet();          // random 24-word mnemonic
+// const w = await walletFromMnemonic(existing); // or recover
+w.cosmos // qor1…            (bech32)
+w.evm    // 0x… (EIP-55)     (hex — EVM-native, spendable via eth_sendRawTransaction)
+w.svm    // <base58>         (base58 of the 20 bytes + 12 zero-byte pad)
+w.privateKey // 0x… (32B)
+w.pqc    // { publicKey, secretKey }  ML-DSA-87
+```
+
+The key is **eth-native** (address = `keccak256(pubkey)[12:]`), so it is spendable
+on the EVM lane; `cosmos` and `svm` are just other encodings of the same 20 bytes,
+under which the chain reads one `x/bank` balance. The account can sign EVM txs
+(EIP-155) **and** PQC-hybrid Cosmos txs (the chain's Cosmos ante handles
+`eth_secp256k1` and the hybrid decorator keys off the address).
+
+`addressesFrom20(bytes20)` / `qoreAddresses({cosmos|evm|hex})` derive the three
+encodings from a known account (for explorers / backends).

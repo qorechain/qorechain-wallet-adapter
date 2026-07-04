@@ -29,6 +29,10 @@ export {
   base58Encode, base58Decode, SYSTEM_PROGRAM_ID, systemTransferData,
   authSignBytes, buildPhantomSvmEnvelope, buildPhantomTransfer, registerAuthenticatorMsg,
 } from './phantom.js';
+// Unified wallet generation: one eth-native key → cosmos/evm/svm addresses + PQC key.
+export {
+  generateQoreWallet, walletFromMnemonic, addressesFrom20, qoreAddresses,
+} from './wallet.js';
 import { TxBody, AuthInfo, TxRaw, SignerInfo, ModeInfo, Fee } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
 import { SignMode } from 'cosmjs-types/cosmos/tx/signing/v1beta1/signing.js';
 import { SignDoc } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
