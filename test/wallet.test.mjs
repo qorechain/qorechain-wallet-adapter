@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fromBech32, fromHex, toHex } from '@cosmjs/encoding';
-import { generateQoreWallet, walletFromMnemonic, addressesFrom20, qoreAddresses, base58Decode } from '../src/index.js';
+import { generateQoreWallet, walletFromMnemonic, walletFromSeed, addressesFrom20, qoreAddresses, base58Decode } from '../src/index.js';
 
 // The three encodings must all resolve to the SAME 20-byte account.
 function assertSame20(w) {
@@ -51,4 +51,21 @@ test('addressesFrom20 matches a known 20-byte account (the 0x57b6… recipient)'
   const addr = addressesFrom20(fromHex('57b6f9c9c1b4e2646b15a421679e601c34f8b37c'));
   assert.equal(addr.cosmos, 'qor127m0njwpkn3xg6c45ssk08nqrs603vmu0xyjnq'); // verified live on mainnet
   assert.equal(addr.evm.toLowerCase(), '0x57b6f9c9c1b4e2646b15a421679e601c34f8b37c');
+});
+
+test('walletFromSeed: deterministic, unified 3-address, ML-DSA-87 key (Phantom P1a flow)', async () => {
+  const seed = fromHex('11'.repeat(32)); // any 32 bytes, e.g. shake256(phantomSignature)
+  const w1 = await walletFromSeed(seed);
+  const w2 = await walletFromSeed('0x' + '11'.repeat(32)); // hex form must match bytes form
+  assert.equal(w1.cosmos, w2.cosmos);
+  assert.equal(w1.evm, w2.evm);
+  assert.equal(w1.svm, w2.svm);
+  assert.equal(w1.privateKey, w2.privateKey);
+  assert.equal(toHex(w1.pqc.publicKey), toHex(w2.pqc.publicKey));
+  assertSame20(w1);
+  assert.equal(w1.pqc.publicKey.length, 2592);
+  assert.equal(w1.mnemonic, null);
+  // a different seed yields a different account
+  const w3 = await walletFromSeed(fromHex('22'.repeat(32)));
+  assert.notEqual(w3.cosmos, w1.cosmos);
 });

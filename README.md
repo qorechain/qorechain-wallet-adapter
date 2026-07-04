@@ -72,15 +72,24 @@ await fetch(`${rpc}`, { method:'POST', body: JSON.stringify({
 | **Keplr** | `experimentalSuggestChain` + `signDirect` | ✅ supported |
 | **Leap / Cosmostation** | same `signDirect` interface | ✅ supported (any wallet exposing `signDirect`) |
 | **MetaMask** | uses QoreChain's **EVM** path (chainId 9800) — structurally PQC-exempt | ✅ works natively, no adapter needed |
-| **Phantom** | QoreChain's Solana-compatible RPC (`:8899`) | ⚠️ read/native-send; PQC SVM execute needs the same hybrid pattern |
+| **Phantom** | derive a unified account from a Phantom signature (`walletFromSeed`) | ✅ connect → qor1/0x/svm, receive on any, spend on any (incl. hybrid PQC) |
 
 ## API
 
-- `frame(b0, auth)` — QoreChain hybrid sign-bytes framing.
-- `encodePqcHybridSignature(algId, sig)` — proto encoder for the extension.
-- `derivePqcKeyFromWallet(wallet, chainId, address)` — deterministic ML-DSA-87 key from a wallet signature.
+Wallet generation & unified addresses:
+- `generateQoreWallet(strength?)` / `walletFromMnemonic(mnemonic)` / `walletFromSeed(seed32)` — a unified wallet `{ mnemonic, privateKey, pubkey, cosmos, evm, svm, pqc }`.
+- `addressesFrom20(bytes20)` / `qoreAddresses({cosmos|evm|hex})` — the three encodings of a known account.
+
+eth-native Cosmos signing (chain ≥ v3.1.83):
+- `signClassicalEth({ key, chainId, accountNumber, sequence, messages, fee, memo?, timeoutHeight? })` → `TxRaw` bytes (classical, e.g. PQC key registration).
+- `signHybridEth({ ... })` → `TxRaw` bytes (eth_secp256k1 + ML-DSA-87 hybrid).
+- `ETHSECP256K1_PUBKEY_TYPE` — the eth pubkey type URL.
+
+Keplr / any-signDirect adapter + PQC framing:
 - `QoreChainSigner#signHybrid({ messages, fee, sequence, memo?, timeoutHeight? })` → `TxRaw` bytes.
-- `qoreChainInfo({ chainId?, rpc, rest })` — Keplr chain descriptor.
+- `derivePqcKeyFromWallet(wallet, chainId, address)` — deterministic ML-DSA-87 key from a wallet signature.
+- `frame(b0, auth)` — QoreChain hybrid sign-bytes framing; `encodePqcHybridSignature(algId, sig)` — proto encoder for the extension.
+- `qoreChainInfo({ chainId?, rpc, rest })` — Keplr chain descriptor; `qoreEvmChainParams(...)` / `addQoreEvmToWallet(provider, opts)` — MetaMask (EIP-3085) EVM descriptor.
 
 ## License
 
@@ -112,3 +121,52 @@ under which the chain reads one `x/bank` balance. The account can sign EVM txs
 
 `addressesFrom20(bytes20)` / `qoreAddresses({cosmos|evm|hex})` derive the three
 encodings from a known account (for explorers / backends).
+
+### Derive from a seed (Phantom & other non-mnemonic flows)
+
+`walletFromSeed(seed32)` builds the same unified wallet from any 32 bytes (the
+seed becomes the secp256k1 key). Because a wallet's signature over a fixed message
+is deterministic, you can derive **one canonical QoreChain account from a Phantom
+(ed25519) signature** — a Phantom user connects once and gets three usable
+QoreChain addresses they fully control:
+
+```js
+import { walletFromSeed } from "@qorechain/wallet-adapter";
+import { shake256 } from "@qorechain/pqc";
+
+const msg = new TextEncoder().encode("QoreChain unified account derivation v1");
+const { signature } = await window.solana.signMessage(msg); // Phantom, deterministic
+const w = await walletFromSeed(shake256(signature, 32));     // → qor1 / 0x / svm + pqc
+```
+
+## eth-native Cosmos signing (requires chain ≥ v3.1.83)
+
+The unified account **signs on the Cosmos lane too**, with the `eth_secp256k1`
+scheme (secp256k1 over `keccak256(signBytes)`, pubkey
+`/cosmos.evm.crypto.v1.ethsecp256k1.PubKey`). `signClassicalEth` builds a
+classical-only tx (for the one-time, bootstrap-exempt PQC key registration);
+`signHybridEth` adds the ML-DSA-87 hybrid signature the ante requires for
+everything else. Both return broadcast-ready `TxRaw` bytes.
+
+```js
+import { walletFromMnemonic, signClassicalEth, signHybridEth } from "@qorechain/wallet-adapter";
+
+const key = await walletFromMnemonic(mnemonic); // has { privateKey, pubkey, pqc }
+const fee = { amount: [{ denom: "uqor", amount: "30000" }], gasLimit: 300000n };
+
+// 1) one-time: register the account's ML-DSA-87 key (classical, PQC-exempt)
+const regTx = await signClassicalEth({ key, chainId, accountNumber, sequence,
+  messages: [{ typeUrl: "/qorechain.pqc.v1.MsgRegisterPQCKeyV2", value: registerMsgBytes }],
+  fee: { amount: [{ denom: "uqor", amount: "600000" }], gasLimit: 6000000n } });
+
+// 2) thereafter: hybrid eth_secp256k1 + ML-DSA-87 (e.g. a bank MsgSend)
+const sendTx = await signHybridEth({ key, chainId, accountNumber, sequence,
+  messages: [{ typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: msgSendBytes }], fee });
+```
+
+> **Requires QoreChain ≥ v3.1.83** — that release registers the `eth_secp256k1`
+> pubkey on the node's interface registry so eth-native Cosmos txs decode. Both
+> `qorechain-diana` (testnet) and `qorechain-vladi` (mainnet) run it.
+> `@qorechain/chain-bridge` wraps this server-side (`keyType: 'eth_secp256k1'`,
+> auto-registers the PQC key on first send). **Proven live** on QoreChain: register
+> (code 0) + hybrid send (code 0) + an EVM transfer from the same key, one balance.

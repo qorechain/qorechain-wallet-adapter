@@ -31,7 +31,7 @@ export {
 } from './phantom.js';
 // Unified wallet generation: one eth-native key → cosmos/evm/svm addresses + PQC key.
 export {
-  generateQoreWallet, walletFromMnemonic, addressesFrom20, qoreAddresses,
+  generateQoreWallet, walletFromMnemonic, walletFromSeed, addressesFrom20, qoreAddresses,
 } from './wallet.js';
 // eth-native (eth_secp256k1) Cosmos signing — classical (register) + hybrid (PQC).
 export {

@@ -86,6 +86,40 @@ export async function walletFromMnemonic(mnemonic) {
   return fromMnemonicObj(mnemonic);
 }
 
+/**
+ * Derive a unified QoreChain wallet directly from a 32-byte seed (no mnemonic).
+ *
+ * The seed is used as the secp256k1 private key, so a caller can derive one
+ * canonical eth-native account deterministically from any 32 bytes — e.g.
+ * `shake256(phantomSignature)` for the Phantom "connect → 3 addresses" flow, or
+ * an HKDF/KDF output from another wallet. Same 20-byte identity model as
+ * `walletFromMnemonic`: qor1 / 0x / svm all resolve to the same account and the
+ * same balance, and the key signs on every interface (incl. hybrid PQC).
+ *
+ * The ML-DSA-87 key is bound to `qorechain:pqc:v1|<qor1>|seed:<hex>` so it is
+ * recoverable from the same seed and never collides with a mnemonic wallet.
+ * `seed` accepts a 32-byte Uint8Array or a (0x-)hex string.
+ */
+export async function walletFromSeed(seed) {
+  const privkey = typeof seed === 'string' ? fromHex(seed.replace(/^0x/, '')) : seed;
+  if (!(privkey instanceof Uint8Array) || privkey.length !== 32) {
+    throw new Error('seed must be 32 bytes (Uint8Array or hex)');
+  }
+  const kp = await Secp256k1.makeKeypair(privkey); // validates the scalar is in [1, n-1]
+  const uncompressed = kp.pubkey;
+  const compressed = Secp256k1.compressPubkey(uncompressed);
+  const addr20 = new Keccak256(uncompressed.slice(1)).digest().slice(12);
+  const enc = addressesFrom20(addr20);
+  const pqcSeed = shake256(new TextEncoder().encode(`qorechain:pqc:v1|${enc.cosmos}|seed:${toHex(privkey)}`), 32);
+  return {
+    mnemonic: null,
+    privateKey: '0x' + toHex(privkey),
+    pubkey: '0x' + toHex(compressed),
+    ...enc,
+    pqc: mldsa.keygen(pqcSeed),
+  };
+}
+
 /** Convenience: the three address encodings of an existing account. */
 export function qoreAddresses({ cosmos, evm, hex }) {
   let addr20;
