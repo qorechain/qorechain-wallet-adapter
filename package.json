@@ -1,6 +1,6 @@
 {
   "name": "@qorechain/wallet-adapter",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Drop-in adapter to add QoreChain to any Cosmos wallet (Keplr, Leap, Cosmostation, …) and sign its PQC-required transactions. The wallet signs an ordinary SIGN_MODE_DIRECT SignDoc; the adapter layers a standard FIPS-204 ML-DSA-87 hybrid signature into the tx body, so no wallet code changes are needed.",
   "type": "module",
   "main": "src/index.js",

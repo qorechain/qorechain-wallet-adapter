@@ -33,6 +33,10 @@ export {
 export {
   generateQoreWallet, walletFromMnemonic, addressesFrom20, qoreAddresses,
 } from './wallet.js';
+// eth-native (eth_secp256k1) Cosmos signing — classical (register) + hybrid (PQC).
+export {
+  signClassicalEth, signHybridEth, ETHSECP256K1_PUBKEY_TYPE,
+} from './sign-eth.js';
 import { TxBody, AuthInfo, TxRaw, SignerInfo, ModeInfo, Fee } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
 import { SignMode } from 'cosmjs-types/cosmos/tx/signing/v1beta1/signing.js';
 import { SignDoc } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
