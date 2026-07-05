@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import {
   evmAuthSignBytes, cosmosAuthSignBytes, rotationSignBytes,
   executeEvmMsg, executeCosmosMsg, revokeAuthenticatorMsg,
-  rotatePqcKeyMsgFromMnemonic, derivePqcLegacy,
+  rotatePqcKeyMsgFromMnemonic, derivePqcLegacy, buildMetaMaskExecuteEvm,
 } from '../src/authenticator.js';
 
 const enc = new TextEncoder();
@@ -91,3 +91,22 @@ test('rotatePqcKeyMsgFromMnemonic builds a dual-signed migration (bridge→adapt
   assert.deepEqual(oldKeypair.publicKey, msg.value.oldPublicKey);
   assert.deepEqual(newKeypair.publicKey, msg.value.newPublicKey);
 });
+
+test('buildMetaMaskExecuteEvm: signs the right digest via personal_sign and shapes the msg', async () => {
+  const chainId = 'qorechain-diana', account = 'qor1abc';
+  const address = '0x' + '731e962e8011bc8ffec5c584c8f3440e33d000f9';
+  let captured = null;
+  const provider = { request: async ({ method, params }) => { captured = { method, params }; return '0x' + '11'.repeat(65); } };
+  const msg = await buildMetaMaskExecuteEvm({ provider, address, relayer: 'qor1relayer', chainId, account, to: '0x00000000000000000000000000000000000000aa', value: '100', nonce: 5 });
+  // the provider must be asked to personal_sign the exact evm digest.
+  const digest = await evmAuthSignBytes({ chainId, account, pubkey: hexToBytesLocal(address), to: '0x00000000000000000000000000000000000000aa', value: '100', data: new Uint8Array(0), nonce: 5 });
+  assert.equal(captured.method, 'personal_sign');
+  assert.equal(captured.params[0], '0x' + Buffer.from(digest).toString('hex'));
+  assert.equal(captured.params[1], address);
+  assert.equal(msg.typeUrl, '/qorechain.abstractaccount.v1.MsgExecuteEVM');
+  assert.equal(msg.value.scheme, 'secp256k1');
+  assert.equal(msg.value.pubkey.length, 20);      // eth address form
+  assert.equal(msg.value.signature.length, 65);   // r||s||v
+});
+
+function hexToBytesLocal(hex) { hex = hex.replace(/^0x/, ''); const o = new Uint8Array(hex.length / 2); for (let i = 0; i < o.length; i++) o[i] = parseInt(hex.substr(i * 2, 2), 16); return o; }

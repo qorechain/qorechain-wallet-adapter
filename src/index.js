@@ -42,6 +42,7 @@ export {
   evmAuthSignBytes, cosmosAuthSignBytes, rotationSignBytes,
   executeEvmMsg, executeCosmosMsg, revokeAuthenticatorMsg, rotatePqcKeyMsg,
   buildPhantomExecuteEvm, buildPhantomExecuteCosmos,
+  registerEthAuthenticatorMsg, buildMetaMaskExecuteEvm, buildMetaMaskExecuteCosmos,
   rotatePqcKeyMsgFromMnemonic, derivePqcLegacy,
 } from './authenticator.js';
 import { TxBody, AuthInfo, TxRaw, SignerInfo, ModeInfo, Fee } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';

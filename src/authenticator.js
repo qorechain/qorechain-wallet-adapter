@@ -210,6 +210,59 @@ export async function buildPhantomExecuteCosmos({ wallet, relayer, chainId, acco
   return executeCosmosMsg({ relayer, account, scheme: 'ed25519', pubkey, signature, to, amount, nonce });
 }
 
+// ---- MetaMask (EIP-191 personal_sign / secp256k1) envelope builders ----
+//
+// A browser EVM wallet exposes only its 20-byte address + `personal_sign`, never
+// the raw public key, so the account is linked by its ETH ADDRESS (scheme
+// "secp256k1", 20-byte pubkey). The chain verifies with EIP-191 + ecrecover
+// (v3.1.85). The digest the wallet signs is the SAME one the Phantom/cosmos
+// paths use — only the signing scheme differs.
+
+function hexToBytes(hex) {
+  hex = String(hex).replace(/^0x/, '');
+  const o = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < o.length; i++) o[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return o;
+}
+function bytesToHex0x(b) { let s = '0x'; for (const x of b) s += x.toString(16).padStart(2, '0'); return s; }
+
+// personal_sign over the 32-byte digest via an EIP-1193 provider (e.g. MetaMask).
+async function ethPersonalSign(provider, address, digest) {
+  const sigHex = await provider.request({ method: 'personal_sign', params: [bytesToHex0x(digest), address] });
+  return hexToBytes(sigHex); // 65 bytes r‖s‖v (v = 27/28)
+}
+
+/**
+ * registerEthAuthenticatorMsg builds the owner-signed MsgRegisterAuthenticator
+ * that links a MetaMask / EVM key (by its 0x address) to the owner's account.
+ * `ethAddress` is the 0x-hex 20-byte address.
+ */
+export function registerEthAuthenticatorMsg({ owner, account = owner, ethAddress, permissions = ['evm'], expiryUnix, label = 'metamask' }) {
+  return {
+    typeUrl: '/qorechain.abstractaccount.v1.MsgRegisterAuthenticator',
+    value: {
+      owner, accountAddress: account, scheme: 'secp256k1',
+      pubkey: hexToBytes(ethAddress), permissions, expiryUnix: BigInt(expiryUnix), label,
+    },
+  };
+}
+
+/** buildMetaMaskExecuteEvm: MetaMask (EIP-191) → MsgExecuteEVM ready for the relayer. */
+export async function buildMetaMaskExecuteEvm({ provider, address, relayer, chainId, account, to = '', value = '0', data = new Uint8Array(0), gasLimit = 100000, nonce }) {
+  const pubkey = hexToBytes(address); // 20-byte eth address = the authenticator pubkey
+  const digest = await evmAuthSignBytes({ chainId, account, pubkey, to, value, data, nonce });
+  const signature = await ethPersonalSign(provider, address, digest);
+  return executeEvmMsg({ relayer, account, scheme: 'secp256k1', pubkey, signature, to, value, data, gasLimit, nonce });
+}
+
+/** buildMetaMaskExecuteCosmos: MetaMask (EIP-191) → MsgExecuteCosmos ready for the relayer. */
+export async function buildMetaMaskExecuteCosmos({ provider, address, relayer, chainId, account, to, amount, nonce }) {
+  const pubkey = hexToBytes(address);
+  const digest = await cosmosAuthSignBytes({ chainId, account, pubkey, to, amount, nonce });
+  const signature = await ethPersonalSign(provider, address, digest);
+  return executeCosmosMsg({ relayer, account, scheme: 'secp256k1', pubkey, signature, to, amount, nonce });
+}
+
 // ---- key rotation (legacy → canonical migration) ----
 
 const CANONICAL = 'adapter'; // shake256("qorechain:pqc:v1|addr|mnemonic")  (SDK/wallet-adapter)

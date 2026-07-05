@@ -86,3 +86,9 @@ export function buildPhantomExecuteCosmos(p: { wallet: any; relayer: string; cha
 export function rotatePqcKeyMsgFromMnemonic(p: { account: string; mnemonic: string; chainId: string; algorithmId?: number; oldDerivation?: 'adapter' | 'bridge'; newDerivation?: 'adapter' | 'bridge' }): { msg: { typeUrl: string; value: any }; oldKeypair: PqcKeypairFull; newKeypair: PqcKeypairFull };
 /** The LEGACY (chain-bridge) ML-DSA-87 derivation `shake256(mnemonic)`. */
 export function derivePqcLegacy(mnemonic: string): PqcKeypairFull;
+/** Link a MetaMask / EVM key (by 0x address) as a scoped authenticator (owner-signed). */
+export function registerEthAuthenticatorMsg(p: { owner: string; account?: string; ethAddress: string; permissions?: string[]; expiryUnix: number | bigint; label?: string }): { typeUrl: string; value: any };
+/** MetaMask (EIP-191 personal_sign) → MsgExecuteEVM ready for the relayer. `provider` is EIP-1193. */
+export function buildMetaMaskExecuteEvm(p: { provider: any; address: string; relayer: string; chainId: string; account: string; to?: string; value?: string; data?: Uint8Array; gasLimit?: number | bigint; nonce: number | bigint }): Promise<{ typeUrl: string; value: any }>;
+/** MetaMask (EIP-191 personal_sign) → MsgExecuteCosmos ready for the relayer. */
+export function buildMetaMaskExecuteCosmos(p: { provider: any; address: string; relayer: string; chainId: string; account: string; to: string; amount: string; nonce: number | bigint }): Promise<{ typeUrl: string; value: any }>;
