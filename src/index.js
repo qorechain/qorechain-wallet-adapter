@@ -37,6 +37,13 @@ export {
 export {
   signClassicalEth, signHybridEth, ETHSECP256K1_PUBKEY_TYPE,
 } from './sign-eth.js';
+// v3.1.85 authenticator lanes (EVM + Native/Cosmos) + PQC key rotation.
+export {
+  evmAuthSignBytes, cosmosAuthSignBytes, rotationSignBytes,
+  executeEvmMsg, executeCosmosMsg, revokeAuthenticatorMsg, rotatePqcKeyMsg,
+  buildPhantomExecuteEvm, buildPhantomExecuteCosmos,
+  rotatePqcKeyMsgFromMnemonic, derivePqcLegacy,
+} from './authenticator.js';
 import { TxBody, AuthInfo, TxRaw, SignerInfo, ModeInfo, Fee } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
 import { SignMode } from 'cosmjs-types/cosmos/tx/signing/v1beta1/signing.js';
 import { SignDoc } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';

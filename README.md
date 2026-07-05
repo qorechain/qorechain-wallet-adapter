@@ -170,3 +170,50 @@ const sendTx = await signHybridEth({ key, chainId, accountNumber, sequence,
 > `@qorechain/chain-bridge` wraps this server-side (`keyType: 'eth_secp256k1'`,
 > auto-registers the PQC key on first send). **Proven live** on QoreChain: register
 > (code 0) + hybrid send (code 0) + an EVM transfer from the same key, one balance.
+
+## Authenticator lanes + key rotation (v3.1.85)
+
+Let a linked external key (Phantom ed25519 / a secp256k1 key) **spend from the
+one unified PQC-required account** under least-privilege, spend-limited terms —
+via a relayer, with no ML-DSA co-signature from the external key. Owner links the
+key once (`registerAuthenticatorMsg`, hybrid-signed); thereafter the external key
+authorizes actions on three lanes:
+
+- **SVM** — `buildPhantomSvmEnvelope` / `buildPhantomTransfer` (post to `sendTransaction`).
+- **EVM** — `buildPhantomExecuteEvm` → `MsgExecuteEVM` (relayer broadcasts).
+- **Native** — `buildPhantomExecuteCosmos` → `MsgExecuteCosmos` (relayer broadcasts).
+
+```js
+import { buildPhantomExecuteEvm, buildPhantomExecuteCosmos } from "@qorechain/wallet-adapter";
+
+// nonce = the account's CURRENT EVM nonce (eth_getTransactionCount(account0x)).
+// The relayer is a DIFFERENT account than the owner, so it does NOT pre-increment it.
+const evmMsg = await buildPhantomExecuteEvm({
+  wallet: phantom, relayer: relayerAddr, chainId, account: qor1,
+  to: "0x…", value: "100000000000000000" /* wei */, nonce });
+
+const sendMsg = await buildPhantomExecuteCosmos({
+  wallet: phantom, relayer: relayerAddr, chainId, account: qor1,
+  to: "qor1…", amount: "250uqor", nonce: authSeq /* per-authenticator sequence */ });
+// → hand each msg to your relayer; it broadcasts with its own hybrid-PQC signature.
+```
+
+Errors (codespace `abstractaccount`): `5` spending-limit, `6` session-key expired
+(render "re-link"), `10` permission-denied, `11` replay. Fetch the live scope
+taxonomy over REST: `GET /qorechain/abstractaccount/v1/permission_schema`.
+
+**Key rotation** (`MsgRotatePQCKey`) — migrate a legacy chain-bridge key
+(`shake256(mnemonic)`) to the canonical address-bound key of the SAME algorithm:
+
+```js
+import { rotatePqcKeyMsgFromMnemonic } from "@qorechain/wallet-adapter";
+const { msg, oldKeypair } = rotatePqcKeyMsgFromMnemonic({ account: qor1, mnemonic, chainId });
+// broadcast `msg` from the account, cosigned (hybrid) with `oldKeypair` (still the
+// registered key until the rotation lands) — e.g. a QoreChainSigner whose pqc=oldKeypair.
+```
+
+> **Requires QoreChain ≥ v3.1.85.** Auth sign-bytes (`evmAuthSignBytes`,
+> `cosmosAuthSignBytes`) are rebuilt byte-for-byte from the chain and guarded by
+> tests. For a **secp256k1** authenticator the chain uses cosmos `VerifySignature`
+> (sha256-based), NOT MetaMask `personal_sign` — sign the digest with a
+> cosmos-style secp256k1 signer, not `personal_sign`.

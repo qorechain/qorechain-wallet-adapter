@@ -61,3 +61,28 @@ export class QoreChainSigner {
   constructor(opts: { wallet: any; chainId: string; address: string; pubkeySecp256k1: Uint8Array; accountNumber: number | bigint; pqc: { publicKey: Uint8Array; secretKey: Uint8Array } });
   signHybrid(opts: { messages: any[]; fee: any; memo?: string; sequence: number | bigint; timeoutHeight?: bigint }): Promise<Uint8Array>;
 }
+
+// --- v3.1.85 authenticator lanes (EVM + Native/Cosmos) + PQC key rotation (requires chain >= v3.1.85) ---
+export interface PqcKeypairFull { publicKey: Uint8Array; secretKey: Uint8Array; }
+/** 32-byte digest an authenticator signs to authorize a MsgExecuteEVM. */
+export function evmAuthSignBytes(p: { chainId: string; account: string; pubkey: Uint8Array; to?: string; value?: string; data?: Uint8Array; nonce: number | bigint }): Promise<Uint8Array>;
+/** 32-byte digest an authenticator signs to authorize a MsgExecuteCosmos. */
+export function cosmosAuthSignBytes(p: { chainId: string; account: string; pubkey: Uint8Array; to: string; amount: string; nonce: number | bigint }): Promise<Uint8Array>;
+/** Domain-separated STRING both keys sign for a MsgRotatePQCKey (sign utf8 of it). */
+export function rotationSignBytes(chainId: string, algorithmId: number, account: string, oldPub: Uint8Array, newPub: Uint8Array): string;
+/** MsgExecuteEVM (relayer broadcasts + pays fees). */
+export function executeEvmMsg(p: { relayer: string; account: string; scheme: string; pubkey: Uint8Array; signature: Uint8Array; to?: string; value?: string; data?: Uint8Array; gasLimit: number | bigint; nonce: number | bigint }): { typeUrl: string; value: any };
+/** MsgExecuteCosmos (relayer broadcasts). `amount` is a single-coin string e.g. "100uqor". */
+export function executeCosmosMsg(p: { relayer: string; account: string; scheme: string; pubkey: Uint8Array; signature: Uint8Array; to: string; amount: string; nonce: number | bigint }): { typeUrl: string; value: any };
+/** MsgRevokeAuthenticator (owner-signed) — instantly disables a linked key. */
+export function revokeAuthenticatorMsg(p: { owner: string; account?: string; scheme: string; pubkey: Uint8Array }): { typeUrl: string; value: any };
+/** MsgRotatePQCKey (sender-signed hybrid with the OLD key). */
+export function rotatePqcKeyMsg(p: { sender: string; oldPublicKey: Uint8Array; newPublicKey: Uint8Array; oldSignature: Uint8Array; newSignature: Uint8Array }): { typeUrl: string; value: any };
+/** Phantom (ed25519) → MsgExecuteEVM ready for the relayer. */
+export function buildPhantomExecuteEvm(p: { wallet: any; relayer: string; chainId: string; account: string; to?: string; value?: string; data?: Uint8Array; gasLimit?: number | bigint; nonce: number | bigint }): Promise<{ typeUrl: string; value: any }>;
+/** Phantom (ed25519) → MsgExecuteCosmos ready for the relayer. */
+export function buildPhantomExecuteCosmos(p: { wallet: any; relayer: string; chainId: string; account: string; to: string; amount: string; nonce: number | bigint }): Promise<{ typeUrl: string; value: any }>;
+/** Build a MsgRotatePQCKey to migrate a key between derivations (default legacy→canonical). Broadcast cosigned with the OLD keypair. */
+export function rotatePqcKeyMsgFromMnemonic(p: { account: string; mnemonic: string; chainId: string; algorithmId?: number; oldDerivation?: 'adapter' | 'bridge'; newDerivation?: 'adapter' | 'bridge' }): { msg: { typeUrl: string; value: any }; oldKeypair: PqcKeypairFull; newKeypair: PqcKeypairFull };
+/** The LEGACY (chain-bridge) ML-DSA-87 derivation `shake256(mnemonic)`. */
+export function derivePqcLegacy(mnemonic: string): PqcKeypairFull;
