@@ -212,6 +212,8 @@ const { msg, oldKeypair } = rotatePqcKeyMsgFromMnemonic({ account: qor1, mnemoni
 // registered key until the rotation lands) — e.g. a QoreChainSigner whose pqc=oldKeypair.
 ```
 
+For a **MetaMask / EVM** key use `registerEthAuthenticatorMsg` (link by 0x address) + `buildMetaMaskExecuteEvm` / `buildMetaMaskExecuteCosmos` — the key signs the digest with `personal_sign` (EIP-191) and the chain verifies by ecrecover, so no raw pubkey is needed. Live-proven: a MetaMask-signed EVM transfer from the unified account committed on QoreChain.
+
 > **Requires QoreChain ≥ v3.1.85.** Auth sign-bytes (`evmAuthSignBytes`,
 > `cosmosAuthSignBytes`) are rebuilt byte-for-byte from the chain and guarded by
 > tests. For a **secp256k1** authenticator the chain uses cosmos `VerifySignature`
