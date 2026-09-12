@@ -72,7 +72,7 @@ await fetch(`${rpc}`, { method:'POST', body: JSON.stringify({
 | **Keplr** | `experimentalSuggestChain` + `signDirect` | ✅ supported |
 | **Leap / Cosmostation** | same `signDirect` interface | ✅ supported (any wallet exposing `signDirect`) |
 | **MetaMask** | uses QoreChain's **EVM** path (chainId 9800) — structurally PQC-exempt | ✅ works natively, no adapter needed |
-| **Phantom** | derive a unified account from a Phantom signature (`walletFromSeed`) | ✅ connect → qor1/0x/svm, receive on any, spend on any (incl. hybrid PQC) |
+| **Phantom** | register the Phantom key as an authenticator on a QoreChain account | ✅ authorises spending under a permission set + SpendingRule, and is revocable. The old signature-derived recipe is withdrawn — see "Derive from a seed" |
 
 ## API
 
@@ -122,22 +122,31 @@ under which the chain reads one `x/bank` balance. The account can sign EVM txs
 `addressesFrom20(bytes20)` / `qoreAddresses({cosmos|evm|hex})` derive the three
 encodings from a known account (for explorers / backends).
 
-### Derive from a seed (Phantom & other non-mnemonic flows)
+### Derive from a seed (non-mnemonic flows)
 
-`walletFromSeed(seed32)` builds the same unified wallet from any 32 bytes (the
-seed becomes the secp256k1 key). Because a wallet's signature over a fixed message
-is deterministic, you can derive **one canonical QoreChain account from a Phantom
-(ed25519) signature** — a Phantom user connects once and gets three usable
-QoreChain addresses they fully control:
+`walletFromSeed(seed32)` builds the same unified wallet from any 32 bytes. **The
+seed becomes the secp256k1 private key**, so it must come from something secret
+and stay secret: a CSPRNG, or a KDF over material only the user holds.
 
-```js
-import { walletFromSeed } from "@qorechain/wallet-adapter";
-import { shake256 } from "@qorechain/pqc";
+> **Do not derive the seed from a wallet signature.** Versions of this README up
+> to 0.1.7 showed a Phantom "connect → three addresses" recipe built on
+> `shake256(signature)` over a fixed message. That recipe is unsound and has
+> been withdrawn. Signature schemes like ed25519 are deterministic (RFC 8032)
+> and the message was public, so the signature is a *constant* that any website
+> can ask the same wallet to reproduce — and whoever obtains it reconstructs the
+> account's entire key material, classical and ML-DSA-87, with nothing to
+> revoke. Changing the message does not fix it: any message an attacker can also
+> request yields the same key.
+>
+> If you followed that recipe, treat every account derived from it as
+> compromised and move the funds.
 
-const msg = new TextEncoder().encode("QoreChain unified account derivation v1");
-const { signature } = await window.solana.signMessage(msg); // Phantom, deterministic
-const w = await walletFromSeed(shake256(signature, 32));     // → qor1 / 0x / svm + pqc
-```
+To let an external wallet (Phantom, MetaMask, …) authorise spending on a
+QoreChain account, register its key as an **authenticator** instead:
+`MsgRegisterAuthenticator`, with an explicit permission set and a `SpendingRule`.
+The external key then signs authorisations for an account it never owned, and it
+can be revoked. See the authenticator execution lanes (`MsgExecuteEVM` /
+`MsgExecuteCosmos`, chain ≥ v3.1.85).
 
 ## eth-native Cosmos signing (requires chain ≥ v3.1.83)
 

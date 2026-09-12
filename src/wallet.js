@@ -89,10 +89,25 @@ export async function walletFromMnemonic(mnemonic) {
 /**
  * Derive a unified QoreChain wallet directly from a 32-byte seed (no mnemonic).
  *
- * The seed is used as the secp256k1 private key, so a caller can derive one
- * canonical eth-native account deterministically from any 32 bytes — e.g.
- * `shake256(phantomSignature)` for the Phantom "connect → 3 addresses" flow, or
- * an HKDF/KDF output from another wallet. Same 20-byte identity model as
+ * The seed IS the secp256k1 private key. It must therefore come from something
+ * that is secret and stays secret — a CSPRNG, or a KDF over material only the
+ * user holds.
+ *
+ * DO NOT derive it from a wallet signature. Earlier versions of this comment
+ * recommended `shake256(phantomSignature)` for a "connect → 3 addresses" flow.
+ * That is unsound: signature schemes like ed25519 are deterministic (RFC 8032),
+ * and the message such flows sign is fixed and public, so the signature is a
+ * constant that any site can ask the same wallet to reproduce. Whoever obtains
+ * it reconstructs this account's entire key material, classical and ML-DSA-87.
+ * Changing the message does not help — any message an attacker can also request
+ * yields the same key.
+ *
+ * To let an external wallet authorise spending, register its key as an
+ * AUTHENTICATOR on a QoreChain account (MsgRegisterAuthenticator, with a
+ * permission set and a SpendingRule) instead of pretending a signature is a
+ * seed. Reported as QSR-2026-0049 and QSR-2026-0176.
+ *
+ * Same 20-byte identity model as
  * `walletFromMnemonic`: qor1 / 0x / svm all resolve to the same account and the
  * same balance, and the key signs on every interface (incl. hybrid PQC).
  *
