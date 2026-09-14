@@ -2,12 +2,25 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { frame, encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 } from '../src/framing.js';
 
-test('frame = BE32(len b0) || b0 || BE32(len auth) || auth', () => {
+test('frame v2 = domain || BE64(len chainId) || chainId || BE32(len b0) || b0 || BE32(len auth) || auth', () => {
   const b0 = Uint8Array.from([1, 2, 3]);
   const auth = Uint8Array.from([9, 9]);
-  const out = frame(b0, auth);
-  // matches the chain's frame(): x/pqc/client/cli/hybrid_sign.go
-  assert.deepEqual([...out], [0, 0, 0, 3, 1, 2, 3, 0, 0, 0, 2, 9, 9]);
+  const out = frame('qorechain-test', b0, auth);
+  // matches the chain's types.HybridSignBytes: x/pqc/types/hybrid_signbytes.go
+  const te = new TextEncoder();
+  const expected = [
+    ...te.encode('qorechain-pqc-hybrid-v2'),
+    0, 0, 0, 0, 0, 0, 0, 14, ...te.encode('qorechain-test'),
+    0, 0, 0, 3, 1, 2, 3, 0, 0, 0, 2, 9, 9,
+  ];
+  assert.deepEqual([...out], expected);
+});
+
+test('frame v2 binds the chain-id and refuses an empty one', () => {
+  const b0 = Uint8Array.from([1]);
+  const auth = Uint8Array.from([2]);
+  assert.notDeepEqual([...frame('chain-a', b0, auth)], [...frame('chain-b', b0, auth)]);
+  assert.throws(() => frame('', b0, auth));
 });
 
 test('encodePqcHybridSignature: field1 varint algId, field2 bytes sig', () => {

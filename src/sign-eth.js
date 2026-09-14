@@ -78,7 +78,7 @@ export async function signHybridEth({ key, chainId, accountNumber, messages, fee
   // B0 = body without the PQC extension.
   const b0 = TxBody.encode(TxBody.fromPartial({ messages, memo, timeoutHeight })).finish();
   // ML-DSA-87 over frame(B0, authInfo).
-  const pqcSig = mldsa.sign(key.pqc.secretKey, frame(b0, authInfoBytes));
+  const pqcSig = mldsa.sign(key.pqc.secretKey, frame(chainId, b0, authInfoBytes));
   const bodyWithExt = TxBody.encode(TxBody.fromPartial({
     messages, memo, timeoutHeight,
     extensionOptions: [{ typeUrl: HYBRID_SIG_TYPE_URL, value: encodePqcHybridSignature(ALGORITHM_ML_DSA_87, pqcSig) }],

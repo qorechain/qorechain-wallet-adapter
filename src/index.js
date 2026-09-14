@@ -19,7 +19,7 @@
 //   sigC = wallet.signDirect( SignDoc{body, authInfo, chainId, accountNumber} )
 //   tx   = TxRaw{ body, authInfo, [sigC] }
 //
-// where frame(b0, auth) = BE32(len b0) ‖ b0 ‖ BE32(len auth) ‖ auth.
+// where frame(chainId, b0, auth) = domain ‖ BE64(len chainId) ‖ chainId ‖ BE32(len b0) ‖ b0 ‖ BE32(len auth) ‖ auth.
 
 import { mldsa, shake256 } from '@qorechain/pqc';
 import { frame, encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 } from './framing.js';
@@ -89,7 +89,7 @@ export class QoreChainSigner {
     const b0 = TxBody.encode(TxBody.fromPartial({ messages, memo, timeoutHeight })).finish();
 
     // 3. ML-DSA-87 sign the framed (B0, authInfo).
-    const pqcSig = mldsa.sign(this.pqc.secretKey, frame(b0, authInfoBytes));
+    const pqcSig = mldsa.sign(this.pqc.secretKey, frame(this.chainId, b0, authInfoBytes));
 
     // 4. body WITH the PQC hybrid extension.
     const bodyWithExt = TxBody.encode(TxBody.fromPartial({

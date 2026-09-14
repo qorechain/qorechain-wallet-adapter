@@ -71,7 +71,7 @@ test('signHybrid embeds the DETERMINISTIC ML-DSA-87 signature the chain verifier
   })).finish();
   // Independent expectation: @noble deterministic mode (extraEntropy:false) —
   // byte-identical to the chain's Rust FFI, per the shared /vectors.
-  const expected = ml_dsa87.sign(frame(b0, authInfoBytes), signer.pqc.secretKey, { extraEntropy: false });
+  const expected = ml_dsa87.sign(frame(signer.chainId, b0, authInfoBytes), signer.pqc.secretKey, { extraEntropy: false });
   assert.equal(hx(sig), hx(expected),
     'signHybrid must produce the deterministic signature (hedged signing is rejected by the chain)');
   assert.equal(body.memo, TX.memo);
