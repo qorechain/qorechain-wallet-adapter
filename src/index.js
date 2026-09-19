@@ -14,16 +14,27 @@
 //
 // Protocol (mirrors the chain's `tx pqc cosign`):
 //   B0   = TxBody{messages, memo, timeoutHeight}            (no extension)
-//   sigP = ML-DSA-87.sign( frame(B0, authInfoBytes) )       // frame = below
+//   v    = resolveSignBytesVersion({chainId, rest})         // 'v1' | 'v2', per network
+//   sigP = ML-DSA-87.sign( hybridSignBytes(v, chainId, B0, authInfoBytes) )
 //   body = TxBody{...B0, extensionOptions:[PQCHybridSignature{1, sigP}]}
 //   sigC = wallet.signDirect( SignDoc{body, authInfo, chainId, accountNumber} )
 //   tx   = TxRaw{ body, authInfo, [sigC] }
 //
-// where frame(chainId, b0, auth) = domain ‖ BE64(len chainId) ‖ chainId ‖ BE32(len b0) ‖ b0 ‖ BE32(len auth) ‖ auth.
+// v1 = BE32(len b0) ‖ b0 ‖ BE32(len auth) ‖ auth
+// v2 = "qorechain-pqc-hybrid-v2" ‖ BE64(len chainId) ‖ chainId ‖ v1-layout
+// A network accepts exactly one form at a time; see ./signbytes.js.
 
 import { mldsa, shake256 } from '@qorechain/pqc';
-import { frame, encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 } from './framing.js';
-export { frame, encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 };
+import { encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 } from './framing.js';
+import { hybridSignBytes, resolveSignBytesVersion } from './signbytes.js';
+export { encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 };
+// Per-network hybrid sign-bytes (v1 legacy / v2) + resolver + rejection detector.
+export {
+  HYBRID_SIGN_BYTES_V2_DOMAIN, SIGN_BYTES_V2_UPGRADE, LEGACY_SIGN_BYTES_CHAINS,
+  hybridSignBytesV1, hybridSignBytesV2, hybridSignBytes,
+  signBytesVersionFor, resolveSignBytesVersion, clearSignBytesCache,
+  isHybridSignBytesRejection,
+} from './signbytes.js';
 // Phantom / any-ed25519-wallet support: drive the one unified account from Phantom.
 export {
   base58Encode, base58Decode, SYSTEM_PROGRAM_ID, systemTransferData,
@@ -64,12 +75,37 @@ export async function derivePqcKeyFromWallet(wallet, chainId, address, domain = 
 export class QoreChainSigner {
   // wallet: a Keplr-like object exposing signDirect(chainId, signer, signDoc) and
   //         (optionally) signArbitrary(...). pqc: { publicKey, secretKey } ML-DSA-87.
-  constructor({ wallet, chainId, address, pubkeySecp256k1, accountNumber, pqc }) {
-    Object.assign(this, { wallet, chainId, address, pubkeySecp256k1, accountNumber, pqc });
+  // rest:   the network's LCD URL; needed to auto-resolve the sign-bytes form on
+  //         qorechain-vladi / qorechain-diana.
+  // signBytesVersion: 'auto' (default) | 'v1' | 'v2'.
+  // fetch:  optional fetch implementation for the resolver (defaults to globalThis.fetch).
+  constructor({ wallet, chainId, address, pubkeySecp256k1, accountNumber, pqc, rest, signBytesVersion = 'auto', fetch }) {
+    Object.assign(this, { wallet, chainId, address, pubkeySecp256k1, accountNumber, pqc, rest, signBytesVersion });
+    if (fetch) this.fetch = fetch;
   }
 
-  // Build + hybrid-sign + return TxRaw bytes ready to broadcast.
-  async signHybrid({ messages, fee, memo = '', sequence, timeoutHeight = 0n }) {
+  _resolve(signBytesVersion, forceRefresh = false) {
+    return resolveSignBytesVersion({
+      chainId: this.chainId, rest: this.rest,
+      signBytesVersion: signBytesVersion ?? this.signBytesVersion ?? 'auto',
+      forceRefresh,
+      ...(this.fetch ? { fetch: this.fetch } : {}),
+    });
+  }
+
+  // Re-ask the network (bypassing the cache) which form it verifies. Call this
+  // after a broadcast is refused with isHybridSignBytesRejection(err), then sign
+  // again and broadcast once more. With an explicit version it returns that version.
+  async refreshSignBytesVersion() {
+    return this._resolve(undefined, true);
+  }
+
+  // Build + hybrid-sign + return TxRaw bytes ready to broadcast. The returned
+  // Uint8Array also carries `.signBytesVersion` ('v1' | 'v2'), the form used.
+  // `signBytesVersion` overrides the signer's setting for this call.
+  async signHybrid({ messages, fee, memo = '', sequence, timeoutHeight = 0n, signBytesVersion }) {
+    const version = await this._resolve(signBytesVersion);
+
     // 1. AuthInfo: single DIRECT signer (secp256k1) + fee.
     const pubAny = {
       typeUrl: '/cosmos.crypto.secp256k1.PubKey',
@@ -88,8 +124,8 @@ export class QoreChainSigner {
     // 2. B0 = body without the PQC extension.
     const b0 = TxBody.encode(TxBody.fromPartial({ messages, memo, timeoutHeight })).finish();
 
-    // 3. ML-DSA-87 sign the framed (B0, authInfo).
-    const pqcSig = mldsa.sign(this.pqc.secretKey, frame(this.chainId, b0, authInfoBytes));
+    // 3. ML-DSA-87 sign the hybrid sign-bytes in the form this network verifies.
+    const pqcSig = mldsa.sign(this.pqc.secretKey, hybridSignBytes(version, this.chainId, b0, authInfoBytes));
 
     // 4. body WITH the PQC hybrid extension.
     const bodyWithExt = TxBody.encode(TxBody.fromPartial({
@@ -108,9 +144,11 @@ export class QoreChainSigner {
       ? Uint8Array.from(Buffer.from(signature.signature, 'base64')) : signature.signature;
 
     // 6. Assemble TxRaw.
-    return TxRaw.encode(TxRaw.fromPartial({
+    const txRaw = TxRaw.encode(TxRaw.fromPartial({
       bodyBytes: bodyWithExt, authInfoBytes, signatures: [classicalSig],
     })).finish();
+    txRaw.signBytesVersion = version;
+    return txRaw;
   }
 }
 

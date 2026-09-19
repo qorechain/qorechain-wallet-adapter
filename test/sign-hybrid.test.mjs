@@ -7,7 +7,7 @@
 // extraEntropy:false, the mode validated against the shared /vectors).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { QoreChainSigner, frame } from '../src/index.js';
+import { QoreChainSigner, hybridSignBytes } from '../src/index.js';
 import { mldsa } from '@qorechain/pqc';
 import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
 import { TxRaw, TxBody, AuthInfo } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
@@ -34,6 +34,7 @@ function makeSigner() {
     pubkeySecp256k1: new Uint8Array(33).fill(2),
     accountNumber: 7,
     pqc: mldsa.keygen(SEED),
+    signBytesVersion: 'v2', // explicit: these tests pin bytes, not network resolution
   });
 }
 
@@ -71,9 +72,10 @@ test('signHybrid embeds the DETERMINISTIC ML-DSA-87 signature the chain verifier
   })).finish();
   // Independent expectation: @noble deterministic mode (extraEntropy:false) —
   // byte-identical to the chain's Rust FFI, per the shared /vectors.
-  const expected = ml_dsa87.sign(frame(signer.chainId, b0, authInfoBytes), signer.pqc.secretKey, { extraEntropy: false });
+  const expected = ml_dsa87.sign(hybridSignBytes('v2', signer.chainId, b0, authInfoBytes), signer.pqc.secretKey, { extraEntropy: false });
   assert.equal(hx(sig), hx(expected),
     'signHybrid must produce the deterministic signature (hedged signing is rejected by the chain)');
+  assert.equal(txRaw.signBytesVersion, 'v2');
   assert.equal(body.memo, TX.memo);
   assert.deepEqual([...AuthInfo.decode(authInfoBytes).fee.amount[0].amount], [...'25000']);
 });

@@ -36,8 +36,11 @@ export interface EthSignArgs {
 }
 /** Classical-only eth_secp256k1 Cosmos tx (e.g. the bootstrap MsgRegisterPQCKeyV2). */
 export function signClassicalEth(args: EthSignArgs): Promise<Uint8Array>;
-/** Hybrid eth_secp256k1 + ML-DSA-87 Cosmos tx (key.pqc required). */
-export function signHybridEth(args: EthSignArgs): Promise<Uint8Array>;
+/**
+ * Hybrid eth_secp256k1 + ML-DSA-87 Cosmos tx (key.pqc required). Throws on a
+ * legacy network when neither an explicit signBytesVersion nor `rest` is given.
+ */
+export function signHybridEth(args: EthSignArgs & { signBytesVersion?: SignBytesVersionOption; rest?: string; fetch?: typeof globalThis.fetch }): Promise<SignedTxBytes>;
 
 // --- EVM network descriptors (EIP-3085 / MetaMask) ---
 export function qoreEvmChainParams(opts?: { evmChainId?: number; rpcUrl?: string; wsUrl?: string; explorerUrl?: string; testnet?: boolean }): any;
@@ -53,13 +56,49 @@ export function authSignBytes(p: { programId: string; accounts: SvmAccountMeta[]
 export function buildPhantomSvmEnvelope(p: { wallet: any; programId?: string; accounts: SvmAccountMeta[]; data: Uint8Array; recentBlockhashHex: string }): Promise<any>;
 export function buildPhantomTransfer(p: { wallet: any; fromSvmAddr: string; toSvmAddr: string; lamports: number | bigint; recentBlockhashHex: string }): Promise<any>;
 export function registerAuthenticatorMsg(p: { owner: string; phantomPubkey: Uint8Array; permissions?: string[]; expiryUnix: number | bigint; label?: string }): { typeUrl: string; value: any };
-export function frame(b0: Uint8Array, auth: Uint8Array): Uint8Array;
+// --- Per-network hybrid PQC sign-bytes (v1 legacy / v2, chain v3.1.98) ---
+export type SignBytesVersion = 'v1' | 'v2';
+export type SignBytesVersionOption = SignBytesVersion | 'auto';
+export const HYBRID_SIGN_BYTES_V2_DOMAIN: 'qorechain-pqc-hybrid-v2';
+export const SIGN_BYTES_V2_UPGRADE: 'v3.1.98';
+export const LEGACY_SIGN_BYTES_CHAINS: readonly string[];
+/** v1: BE32(len b0) ‖ b0 ‖ BE32(len authInfo) ‖ authInfo. */
+export function hybridSignBytesV1(b0: Uint8Array, authInfo: Uint8Array): Uint8Array;
+/** v2: domain ‖ BE64(len chainId) ‖ chainId ‖ BE32(len b0) ‖ b0 ‖ BE32(len authInfo) ‖ authInfo. */
+export function hybridSignBytesV2(chainId: string, b0: Uint8Array, authInfo: Uint8Array): Uint8Array;
+/** Version-dispatching builder; `version` is required. */
+export function hybridSignBytes(version: SignBytesVersion, chainId: string, b0: Uint8Array, authInfo: Uint8Array): Uint8Array;
+/** Mirror of the chain's SignBytesVersionFor; the height is compared numerically ("0" → not applied). */
+export function signBytesVersionFor(chainId: string, v2AppliedHeight: string | number | bigint | null | undefined): SignBytesVersion;
+export function resolveSignBytesVersion(opts: {
+  chainId: string;
+  rest?: string;
+  signBytesVersion?: SignBytesVersionOption;
+  fetch?: typeof globalThis.fetch;
+  ttlMs?: number;
+  forceRefresh?: boolean;
+}): Promise<SignBytesVersion>;
+export function clearSignBytesCache(): void;
+/** True iff the error/result is the chain refusing the hybrid PQC signature (codespace "pqc", code 21). */
+export function isHybridSignBytesRejection(errOrResult: unknown): boolean;
+/** TxRaw bytes plus the sign-bytes form that was used. */
+export type SignedTxBytes = Uint8Array & { signBytesVersion: SignBytesVersion };
 export function encodePqcHybridSignature(algorithmId: number, sig: Uint8Array): Uint8Array;
 export function derivePqcKeyFromWallet(wallet: any, chainId: string, address: string, domain?: string): Promise<{ publicKey: Uint8Array; secretKey: Uint8Array }>;
 export function qoreChainInfo(opts?: { chainId?: string; rpc?: string; rest?: string }): any;
 export class QoreChainSigner {
-  constructor(opts: { wallet: any; chainId: string; address: string; pubkeySecp256k1: Uint8Array; accountNumber: number | bigint; pqc: { publicKey: Uint8Array; secretKey: Uint8Array } });
-  signHybrid(opts: { messages: any[]; fee: any; memo?: string; sequence: number | bigint; timeoutHeight?: bigint }): Promise<Uint8Array>;
+  constructor(opts: {
+    wallet: any; chainId: string; address: string; pubkeySecp256k1: Uint8Array; accountNumber: number | bigint;
+    pqc: { publicKey: Uint8Array; secretKey: Uint8Array };
+    /** LCD URL; required to auto-resolve the sign-bytes form on qorechain-vladi / qorechain-diana. */
+    rest?: string;
+    /** Default 'auto'. */
+    signBytesVersion?: SignBytesVersionOption;
+    fetch?: typeof globalThis.fetch;
+  });
+  signHybrid(opts: { messages: any[]; fee: any; memo?: string; sequence: number | bigint; timeoutHeight?: bigint; signBytesVersion?: SignBytesVersionOption }): Promise<SignedTxBytes>;
+  /** Re-resolve bypassing the cache; returns the new form. */
+  refreshSignBytesVersion(): Promise<SignBytesVersion>;
 }
 
 // --- v3.1.85 authenticator lanes (EVM + Native/Cosmos) + PQC key rotation (requires chain >= v3.1.85) ---

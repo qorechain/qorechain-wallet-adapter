@@ -24,14 +24,75 @@ Mirrors the chain's own `qorechaind tx pqc cosign`:
 
 ```
 B0   = TxBody{messages, memo, timeoutHeight}              // no extension
-sigP = ML-DSA-87.sign( frame(B0, authInfoBytes) )         // adapter does this
+v    = resolveSignBytesVersion({ chainId, rest })          // 'v1' | 'v2', per network
+sigP = ML-DSA-87.sign( hybridSignBytes(v, chainId, B0, authInfoBytes) )  // adapter does this
 body = TxBody{ ...B0, extensionOptions:[ PQCHybridSignature{1, sigP} ] }
 sigC = wallet.signDirect( SignDoc{ body, authInfo, chainId, accountNumber } )
 tx   = TxRaw{ body, authInfo, [sigC] }
 ```
 
-where `frame(b0, auth) = BE32(len b0) ‖ b0 ‖ BE32(len auth) ‖ auth`, the extension
-type URL is `/qorechain.pqc.v1.PQCHybridSignature`, and algorithm `1` = ML-DSA-87.
+The extension type URL is `/qorechain.pqc.v1.PQCHybridSignature` and algorithm
+`1` = ML-DSA-87. The sign-bytes form `v` is chosen per network — see below.
+
+## Hybrid sign-bytes: v1 and v2 (chain v3.1.98)
+
+The ML-DSA key signs one of two byte forms (B0 = body without the PQC extension,
+A = AuthInfo bytes):
+
+```
+v1 (legacy): BE32(len B0) ‖ B0 ‖ BE32(len A) ‖ A
+v2:          "qorechain-pqc-hybrid-v2" ‖ BE64(len chainId) ‖ chainId ‖ BE32(len B0) ‖ B0 ‖ BE32(len A) ‖ A
+```
+
+v2 adds a domain tag (a signature the key made in any other context can never be
+valid transaction sign-bytes) and binds the chain-id. **A network accepts exactly
+one form at any height.** The networks that existed before chain v3.1.98
+(`qorechain-vladi` mainnet, `qorechain-diana` testnet) verify v1 until the
+`v3.1.98` upgrade plan is applied on them and v2 from then on; they upgrade at
+different heights. Today the testnet verifies v2 and **mainnet stays on v1 until
+its own upgrade**. Any other chain verifies v2 from its first block.
+
+`signBytesVersion` (on `QoreChainSigner`, per `signHybrid` call, and on
+`signHybridEth`) takes:
+
+- `'auto'` (default) — a non-legacy chain signs v2 with no network call. On
+  `qorechain-vladi` / `qorechain-diana` the adapter asks the network
+  `GET {rest}/cosmos/upgrade/v1beta1/applied_plan/v3.1.98` and signs v2 iff the
+  returned height is > 0 (compared numerically: mainnet answers `{"height":"0"}`).
+  The answer is cached per (rest, chain-id) for 60 s. **Pass `rest` (the LCD URL)**;
+  without it, or if the query fails, signing throws instead of guessing.
+- `'v1'` / `'v2'` — used as given, no network call.
+
+Signed results are the usual `TxRaw` `Uint8Array`, with `.signBytesVersion`
+(`'v1' | 'v2'`) set to the form actually used.
+
+### Retry once on a sign-bytes refusal (caller side)
+
+The adapter only signs; you broadcast. A network can upgrade while a wallet is
+open, so when the version was `'auto'`, handle a refusal with `pqc` code 21
+("hybrid PQC signature verification failed") by re-resolving once:
+
+```js
+import { QoreChainSigner, isHybridSignBytesRejection } from '@qorechain/wallet-adapter';
+
+const signer = new QoreChainSigner({ wallet, chainId, address, pubkeySecp256k1,
+  accountNumber, pqc, rest: lcdUrl /* signBytesVersion: 'auto' is the default */ });
+
+let txBytes = await signer.signHybrid({ messages, fee, sequence });
+try {
+  await client.broadcastTx(txBytes);            // cosmjs throws BroadcastTxError / returns {code, rawLog}
+} catch (err) {
+  if (!isHybridSignBytesRejection(err)) throw err;   // only codespace "pqc" code 21
+  await signer.refreshSignBytesVersion();            // bypasses the cache
+  txBytes = await signer.signHybrid({ messages, fee, sequence });
+  await client.broadcastTx(txBytes);            // broadcast ONCE more; surface any error
+}
+```
+
+If you check a returned result instead of catching, pass it to
+`isHybridSignBytesRejection(result)` the same way (`{ code, rawLog }` works).
+Do not retry when you passed an explicit `'v1'`/`'v2'`, and do not treat code 21
+from another codespace as this case.
 
 **Verified end-to-end:** an adapter-built tx (ML-DSA-87 via `@noble/post-quantum`
 + classical via a cosmjs signer standing in for Keplr) **committed with code 0**
@@ -59,6 +120,7 @@ const pqc = await derivePqcKeyFromWallet(window.keplr, 'qorechain-diana', accoun
 const adapter = new QoreChainSigner({
   wallet: window.keplr, chainId: 'qorechain-diana', address: account.address,
   pubkeySecp256k1: account.pubkey, accountNumber, pqc,
+  rest, // LCD URL: lets the adapter pick the sign-bytes form this network verifies
 });
 const txBytes = await adapter.signHybrid({ messages, fee, sequence });
 await fetch(`${rpc}`, { method:'POST', body: JSON.stringify({
@@ -82,13 +144,18 @@ Wallet generation & unified addresses:
 
 eth-native Cosmos signing (chain ≥ v3.1.83):
 - `signClassicalEth({ key, chainId, accountNumber, sequence, messages, fee, memo?, timeoutHeight? })` → `TxRaw` bytes (classical, e.g. PQC key registration).
-- `signHybridEth({ ... })` → `TxRaw` bytes (eth_secp256k1 + ML-DSA-87 hybrid).
+- `signHybridEth({ ..., signBytesVersion?, rest? })` → `TxRaw` bytes (eth_secp256k1 + ML-DSA-87 hybrid); throws on a legacy network with neither an explicit version nor `rest`.
 - `ETHSECP256K1_PUBKEY_TYPE` — the eth pubkey type URL.
 
 Keplr / any-signDirect adapter + PQC framing:
-- `QoreChainSigner#signHybrid({ messages, fee, sequence, memo?, timeoutHeight? })` → `TxRaw` bytes.
+- `new QoreChainSigner({ wallet, chainId, address, pubkeySecp256k1, accountNumber, pqc, rest?, signBytesVersion? = 'auto', fetch? })`.
+- `QoreChainSigner#signHybrid({ messages, fee, sequence, memo?, timeoutHeight?, signBytesVersion? })` → `TxRaw` bytes with `.signBytesVersion`.
+- `QoreChainSigner#refreshSignBytesVersion()` → re-resolves, bypassing the cache.
 - `derivePqcKeyFromWallet(wallet, chainId, address)` — deterministic ML-DSA-87 key from a wallet signature.
-- `frame(b0, auth)` — QoreChain hybrid sign-bytes framing; `encodePqcHybridSignature(algId, sig)` — proto encoder for the extension.
+- `hybridSignBytesV1(b0, auth)`, `hybridSignBytesV2(chainId, b0, auth)`, `hybridSignBytes(version, chainId, b0, auth)` — the two sign-bytes forms and a dispatcher (version required; the old implicit `frame()` is removed).
+- `signBytesVersionFor(chainId, v2AppliedHeight)`, `resolveSignBytesVersion({ chainId, rest?, signBytesVersion?, fetch?, ttlMs?, forceRefresh? })`, `clearSignBytesCache()`, `isHybridSignBytesRejection(errOrResult)`.
+- Constants `HYBRID_SIGN_BYTES_V2_DOMAIN`, `SIGN_BYTES_V2_UPGRADE` (`"v3.1.98"`), `LEGACY_SIGN_BYTES_CHAINS`.
+- `encodePqcHybridSignature(algId, sig)` — proto encoder for the extension.
 - `qoreChainInfo({ chainId?, rpc, rest })` — Keplr chain descriptor; `qoreEvmChainParams(...)` / `addQoreEvmToWallet(provider, opts)` — MetaMask (EIP-3085) EVM descriptor.
 
 ## License
@@ -170,7 +237,8 @@ const regTx = await signClassicalEth({ key, chainId, accountNumber, sequence,
 
 // 2) thereafter: hybrid eth_secp256k1 + ML-DSA-87 (e.g. a bank MsgSend)
 const sendTx = await signHybridEth({ key, chainId, accountNumber, sequence,
-  messages: [{ typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: msgSendBytes }], fee });
+  messages: [{ typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: msgSendBytes }], fee,
+  rest: lcdUrl /* picks v1/v2 for this network; or signBytesVersion: 'v1' | 'v2' */ });
 ```
 
 > **Requires QoreChain ≥ v3.1.83** — that release registers the `eth_secp256k1`

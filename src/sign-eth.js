@@ -16,7 +16,8 @@ import { TxBody, AuthInfo, TxRaw, SignerInfo, ModeInfo, Fee, SignDoc } from 'cos
 import { SignMode } from 'cosmjs-types/cosmos/tx/signing/v1beta1/signing.js';
 import { PubKey } from 'cosmjs-types/cosmos/crypto/secp256k1/keys.js';
 import { mldsa } from '@qorechain/pqc';
-import { frame, encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 } from './framing.js';
+import { encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 } from './framing.js';
+import { hybridSignBytes, resolveSignBytesVersion } from './signbytes.js';
 
 // cosmos/evm eth_secp256k1 pubkey type. Wire shape is identical to the cosmos
 // secp256k1 PubKey ({1: bytes key}), only the typeUrl differs.
@@ -72,13 +73,24 @@ export async function signClassicalEth({ key, chainId, accountNumber, messages, 
 /**
  * Hybrid eth_secp256k1 + ML-DSA-87 Cosmos tx. `key` must include `pqc`
  * ({publicKey, secretKey}) as produced by generateQoreWallet/walletFromMnemonic.
+ *
+ * Sign-bytes form: `signBytesVersion` 'v1' | 'v2' is used as given; 'auto'
+ * (default) asks the network via `rest` (LCD URL). On qorechain-vladi /
+ * qorechain-diana with neither an explicit version nor `rest` this THROWS rather
+ * than guess. The returned Uint8Array carries `.signBytesVersion`.
  */
-export async function signHybridEth({ key, chainId, accountNumber, messages, fee, sequence, memo = '', timeoutHeight = 0n }) {
+export async function signHybridEth({
+  key, chainId, accountNumber, messages, fee, sequence, memo = '', timeoutHeight = 0n,
+  signBytesVersion = 'auto', rest, fetch,
+}) {
+  const version = await resolveSignBytesVersion({
+    chainId, rest, signBytesVersion, ...(fetch ? { fetch } : {}),
+  });
   const authInfoBytes = buildAuthInfo(key.pubkey, sequence, fee);
   // B0 = body without the PQC extension.
   const b0 = TxBody.encode(TxBody.fromPartial({ messages, memo, timeoutHeight })).finish();
-  // ML-DSA-87 over frame(B0, authInfo).
-  const pqcSig = mldsa.sign(key.pqc.secretKey, frame(chainId, b0, authInfoBytes));
+  // ML-DSA-87 over the hybrid sign-bytes in the form this network verifies.
+  const pqcSig = mldsa.sign(key.pqc.secretKey, hybridSignBytes(version, chainId, b0, authInfoBytes));
   const bodyWithExt = TxBody.encode(TxBody.fromPartial({
     messages, memo, timeoutHeight,
     extensionOptions: [{ typeUrl: HYBRID_SIG_TYPE_URL, value: encodePqcHybridSignature(ALGORITHM_ML_DSA_87, pqcSig) }],
@@ -87,5 +99,7 @@ export async function signHybridEth({ key, chainId, accountNumber, messages, fee
     bodyBytes: bodyWithExt, authInfoBytes, chainId, accountNumber: BigInt(accountNumber),
   })).finish();
   const classical = await ethSign(signBytes, key.privateKey);
-  return TxRaw.encode(TxRaw.fromPartial({ bodyBytes: bodyWithExt, authInfoBytes, signatures: [classical] })).finish();
+  const txRaw = TxRaw.encode(TxRaw.fromPartial({ bodyBytes: bodyWithExt, authInfoBytes, signatures: [classical] })).finish();
+  txRaw.signBytesVersion = version;
+  return txRaw;
 }
