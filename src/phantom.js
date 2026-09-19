@@ -11,6 +11,10 @@
 // blockhash, so a signature cannot be replayed for a different action/account or
 // (via the blockhash window) indefinitely. This mirrors the on-chain
 // `resolveEnvelopeSigner` / `authSignBytes` in x/svm/rpc.
+//
+// NOTE: the SVM lane is currently closed on both mainnet and testnet (and the
+// authenticator module is disabled), so nothing signed here is accepted yet. When
+// the lane reopens it verifies only the v2 digest ("qorechain-svm-auth-v2") built below.
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const B58MAP = (() => { const m = {}; for (let i = 0; i < B58.length; i++) m[B58[i]] = i; return m; })();
