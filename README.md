@@ -63,6 +63,8 @@ its own upgrade**. Any other chain verifies v2 from its first block.
   without it, or if the query fails, signing throws instead of guessing.
 - `'v1'` / `'v2'` — used as given, no network call.
 
+**Upgrading to 0.2.0.** `rest` is optional in the TypeScript types, so a caller that forgets it compiles cleanly and only fails at runtime on `qorechain-vladi` / `qorechain-diana`. Cover your wiring with a runtime test, not just a type check. In unit tests, pass `signBytesVersion: "v1"` or `"v2"` explicitly (or inject `fetch`): `"auto"` asks the network, so a test that omits it silently depends on a live node.
+
 Signed results are the usual `TxRaw` `Uint8Array`, with `.signBytesVersion`
 (`'v1' | 'v2'`) set to the form actually used.
 
