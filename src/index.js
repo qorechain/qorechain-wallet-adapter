@@ -30,7 +30,7 @@ import { hybridSignBytes, resolveSignBytesVersion } from './signbytes.js';
 export { encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 };
 // Per-network hybrid sign-bytes (v1 legacy / v2) + resolver + rejection detector.
 export {
-  HYBRID_SIGN_BYTES_V2_DOMAIN, SIGN_BYTES_V2_UPGRADE, LEGACY_SIGN_BYTES_CHAINS,
+  HYBRID_SIGN_BYTES_V2_DOMAIN, SIGN_BYTES_V2_UPGRADE, SIGN_BYTES_V2_UPGRADES, LEGACY_SIGN_BYTES_CHAINS,
   hybridSignBytesV1, hybridSignBytesV2, hybridSignBytes,
   signBytesVersionFor, resolveSignBytesVersion, clearSignBytesCache,
   isHybridSignBytesRejection,

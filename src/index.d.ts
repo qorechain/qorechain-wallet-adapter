@@ -56,11 +56,14 @@ export function authSignBytes(p: { programId: string; accounts: SvmAccountMeta[]
 export function buildPhantomSvmEnvelope(p: { wallet: any; programId?: string; accounts: SvmAccountMeta[]; data: Uint8Array; recentBlockhashHex: string }): Promise<any>;
 export function buildPhantomTransfer(p: { wallet: any; fromSvmAddr: string; toSvmAddr: string; lamports: number | bigint; recentBlockhashHex: string }): Promise<any>;
 export function registerAuthenticatorMsg(p: { owner: string; phantomPubkey: Uint8Array; permissions?: string[]; expiryUnix: number | bigint; label?: string }): { typeUrl: string; value: any };
-// --- Per-network hybrid PQC sign-bytes (v1 legacy / v2, chain v3.1.98) ---
+// --- Per-network hybrid PQC sign-bytes (v1 legacy / v2, chain v3.2.0 / testnet v3.1.98) ---
 export type SignBytesVersion = 'v1' | 'v2';
 export type SignBytesVersionOption = SignBytesVersion | 'auto';
 export const HYBRID_SIGN_BYTES_V2_DOMAIN: 'qorechain-pqc-hybrid-v2';
-export const SIGN_BYTES_V2_UPGRADE: 'v3.1.98';
+/** Every upgrade plan name that switches a network to v2, most recent first. */
+export const SIGN_BYTES_V2_UPGRADES: readonly ['v3.2.0', 'v3.1.98'];
+/** The primary (current release) plan name. */
+export const SIGN_BYTES_V2_UPGRADE: 'v3.2.0';
 export const LEGACY_SIGN_BYTES_CHAINS: readonly string[];
 /** v1: BE32(len b0) ‖ b0 ‖ BE32(len authInfo) ‖ authInfo. */
 export function hybridSignBytesV1(b0: Uint8Array, authInfo: Uint8Array): Uint8Array;
@@ -68,7 +71,7 @@ export function hybridSignBytesV1(b0: Uint8Array, authInfo: Uint8Array): Uint8Ar
 export function hybridSignBytesV2(chainId: string, b0: Uint8Array, authInfo: Uint8Array): Uint8Array;
 /** Version-dispatching builder; `version` is required. */
 export function hybridSignBytes(version: SignBytesVersion, chainId: string, b0: Uint8Array, authInfo: Uint8Array): Uint8Array;
-/** Mirror of the chain's SignBytesVersionFor; the height is compared numerically ("0" → not applied). */
+/** Mirror of the chain's SignBytesVersionFor; pass the greatest applied height over SIGN_BYTES_V2_UPGRADES. The height is compared numerically ("0" → not applied). */
 export function signBytesVersionFor(chainId: string, v2AppliedHeight: string | number | bigint | null | undefined): SignBytesVersion;
 export function resolveSignBytesVersion(opts: {
   chainId: string;

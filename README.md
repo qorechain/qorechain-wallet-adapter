@@ -34,7 +34,7 @@ tx   = TxRaw{ body, authInfo, [sigC] }
 The extension type URL is `/qorechain.pqc.v1.PQCHybridSignature` and algorithm
 `1` = ML-DSA-87. The sign-bytes form `v` is chosen per network — see below.
 
-## Hybrid sign-bytes: v1 and v2 (chain v3.1.98)
+## Hybrid sign-bytes: v1 and v2 (chain v3.2.0, testnet v3.1.98)
 
 The ML-DSA key signs one of two byte forms (B0 = body without the PQC extension,
 A = AuthInfo bytes):
@@ -46,22 +46,39 @@ v2:          "qorechain-pqc-hybrid-v2" ‖ BE64(len chainId) ‖ chainId ‖ BE3
 
 v2 adds a domain tag (a signature the key made in any other context can never be
 valid transaction sign-bytes) and binds the chain-id. **A network accepts exactly
-one form at any height.** The networks that existed before chain v3.1.98
+one form at any height.** The networks that existed before v2
 (`qorechain-vladi` mainnet, `qorechain-diana` testnet) verify v1 until the
-`v3.1.98` upgrade plan is applied on them and v2 from then on; they upgrade at
-different heights. Today the testnet verifies v2 and **mainnet stays on v1 until
-its own upgrade**. Any other chain verifies v2 from its first block.
+upgrade plan that carries the switch is applied on them and v2 from then on; they
+upgrade at different heights. Today the testnet verifies v2 and **mainnet stays
+on v1 until its own upgrade**. Any other chain verifies v2 from its first block.
+
+**The switch ships under two plan names.** The release is `v3.2.0`, but the
+testnet already took the same handler under the earlier name `v3.1.98` and keeps
+that record forever, so the chain registers both (`SIGN_BYTES_V2_UPGRADES =
+['v3.2.0', 'v3.1.98']`). A client must ask for **every** name and sign v2 if the
+numeric height of **any** of them is > 0. Asking for one name only resolves v1 on
+a network that upgraded under the other, and every hybrid transaction is then
+refused with `pqc` code 21.
 
 `signBytesVersion` (on `QoreChainSigner`, per `signHybrid` call, and on
 `signHybridEth`) takes:
 
 - `'auto'` (default) — a non-legacy chain signs v2 with no network call. On
   `qorechain-vladi` / `qorechain-diana` the adapter asks the network
-  `GET {rest}/cosmos/upgrade/v1beta1/applied_plan/v3.1.98` and signs v2 iff the
-  returned height is > 0 (compared numerically: mainnet answers `{"height":"0"}`).
+  `GET {rest}/cosmos/upgrade/v1beta1/applied_plan/{name}` for every name in
+  `SIGN_BYTES_V2_UPGRADES` (`v3.2.0`, then `v3.1.98`) and signs v2 iff the
+  returned height of any of them is > 0 (compared numerically: a network that has
+  not taken a plan answers `{"height":"0"}` or `{}`). The names are asked in
+  order and the first positive height wins, so a network on the current release
+  costs one request and one that upgraded under the earlier name costs two.
   The answer is cached per (rest, chain-id) for 60 s. **Pass `rest` (the LCD URL)**;
-  without it, or if the query fails, signing throws instead of guessing.
+  without it, or if a query fails, signing throws instead of guessing.
 - `'v1'` / `'v2'` — used as given, no network call.
+
+**Upgrading to 0.2.1.** 0.2.0 asked for `v3.1.98` alone, which resolves v1 on a
+mainnet that upgraded as `v3.2.0` and gets every hybrid transaction refused with
+`pqc` code 21. Upgrade before the mainnet upgrade height; nothing else in the
+resolver changed and no call site needs touching.
 
 **Upgrading to 0.2.0.** `rest` is optional in the TypeScript types, so a caller that forgets it compiles cleanly and only fails at runtime on `qorechain-vladi` / `qorechain-diana`. Cover your wiring with a runtime test, not just a type check. In unit tests, pass `signBytesVersion: "v1"` or `"v2"` explicitly (or inject `fetch`): `"auto"` asks the network, so a test that omits it silently depends on a live node.
 
@@ -156,7 +173,7 @@ Keplr / any-signDirect adapter + PQC framing:
 - `derivePqcKeyFromWallet(wallet, chainId, address)` — deterministic ML-DSA-87 key from a wallet signature.
 - `hybridSignBytesV1(b0, auth)`, `hybridSignBytesV2(chainId, b0, auth)`, `hybridSignBytes(version, chainId, b0, auth)` — the two sign-bytes forms and a dispatcher (version required; the old implicit `frame()` is removed).
 - `signBytesVersionFor(chainId, v2AppliedHeight)`, `resolveSignBytesVersion({ chainId, rest?, signBytesVersion?, fetch?, ttlMs?, forceRefresh? })`, `clearSignBytesCache()`, `isHybridSignBytesRejection(errOrResult)`.
-- Constants `HYBRID_SIGN_BYTES_V2_DOMAIN`, `SIGN_BYTES_V2_UPGRADE` (`"v3.1.98"`), `LEGACY_SIGN_BYTES_CHAINS`.
+- Constants `HYBRID_SIGN_BYTES_V2_DOMAIN`, `SIGN_BYTES_V2_UPGRADES` (`["v3.2.0", "v3.1.98"]` — every plan name that switches a network to v2), `SIGN_BYTES_V2_UPGRADE` (`"v3.2.0"`, the primary name = `SIGN_BYTES_V2_UPGRADES[0]`), `LEGACY_SIGN_BYTES_CHAINS`.
 - `encodePqcHybridSignature(algId, sig)` — proto encoder for the extension.
 - `qoreChainInfo({ chainId?, rpc, rest })` — Keplr chain descriptor; `qoreEvmChainParams(...)` / `addQoreEvmToWallet(provider, opts)` — MetaMask (EIP-3085) EVM descriptor.
 

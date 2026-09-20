@@ -10,15 +10,26 @@
 // B0 = TxBody WITHOUT the PQC extension option, A = AuthInfo bytes verbatim.
 // Byte-identical to the chain's x/pqc/types.HybridSignBytesLegacy / HybridSignBytes.
 //
-// Which form to sign: a network that existed before chain release v3.1.98
-// (qorechain-vladi mainnet, qorechain-diana testnet) verifies v1 until the
-// "v3.1.98" upgrade plan is applied on it, and v2 from then on. Any other chain
-// verifies v2 from its first block. The two networks upgrade at different
-// heights, so a client must ASK the target network (applied_plan) rather than
-// hardcode a form. That is what resolveSignBytesVersion does.
+// Which form to sign: a network that existed before the release that introduced
+// v2 (qorechain-vladi mainnet, qorechain-diana testnet) verifies v1 until that
+// upgrade plan is applied on it, and v2 from then on. Any other chain verifies
+// v2 from its first block. The two networks upgrade at different heights, so a
+// client must ASK the target network (applied_plan) rather than hardcode a form.
+// That is what resolveSignBytesVersion does.
+//
+// The switch ships under TWO plan names: the release is "v3.2.0", but the
+// testnet already took the same handler under the earlier name "v3.1.98" and
+// keeps that record forever. The chain registers both (x/pqc/types
+// SignBytesV2Upgrades), so a client must ask for EVERY name and sign v2 if the
+// numeric height of ANY of them is greater than zero. Asking for one name only
+// resolves v1 on a network that upgraded under the other, and every hybrid
+// transaction is then refused with pqc code 21.
 
 export const HYBRID_SIGN_BYTES_V2_DOMAIN = 'qorechain-pqc-hybrid-v2';
-export const SIGN_BYTES_V2_UPGRADE = 'v3.1.98';
+/** Every upgrade plan name that switches a network to v2 sign-bytes, most recent first. */
+export const SIGN_BYTES_V2_UPGRADES = Object.freeze(['v3.2.0', 'v3.1.98']);
+/** The primary (current release) plan name; see SIGN_BYTES_V2_UPGRADES for all of them. */
+export const SIGN_BYTES_V2_UPGRADE = SIGN_BYTES_V2_UPGRADES[0];
 export const LEGACY_SIGN_BYTES_CHAINS = Object.freeze(['qorechain-vladi', 'qorechain-diana']);
 
 const te = new TextEncoder();
@@ -86,10 +97,11 @@ function toHeight(h) {
 }
 
 /**
- * The form a client must sign for `chainId`, given the height at which the
- * v3.1.98 plan was applied on it (0 / "0" / missing = not applied). Mirrors the
- * chain's SignBytesVersionFor. Heights are compared NUMERICALLY: the node returns
- * the height as a string, and "0" is truthy.
+ * The form a client must sign for `chainId`, given the height at which a v2
+ * sign-bytes upgrade plan was applied on it (0 / "0" / missing = none applied;
+ * pass the greatest height over SIGN_BYTES_V2_UPGRADES). Mirrors the chain's
+ * SignBytesVersionFor. Heights are compared NUMERICALLY: the node returns the
+ * height as a string, and "0" is truthy.
  */
 export function signBytesVersionFor(chainId, v2AppliedHeight) {
   if (toHeight(v2AppliedHeight) > 0n) return 'v2';
@@ -107,10 +119,13 @@ function normRest(rest) { return String(rest).replace(/\/+$/, ''); }
  * Resolve the hybrid sign-bytes form for a network.
  *   - 'v1' | 'v2' are returned as-is (no network).
  *   - 'auto' (default): a chain that is not a legacy network gets 'v2' with no
- *     HTTP; a legacy network is asked `GET {rest}/cosmos/upgrade/v1beta1/applied_plan/v3.1.98`
- *     and signs v2 iff the returned height > 0. Answers are cached per
- *     (rest, chainId) for `ttlMs`; `forceRefresh` bypasses the cache.
- * Throws (never guesses) when a legacy network has no `rest` or the query fails.
+ *     HTTP; a legacy network is asked `GET {rest}/cosmos/upgrade/v1beta1/applied_plan/{name}`
+ *     for EVERY name in SIGN_BYTES_V2_UPGRADES and signs v2 iff the numeric
+ *     height of ANY of them is > 0. The names are asked in order and the first
+ *     positive height wins, so a network on the current release costs one
+ *     request and one that upgraded under the earlier name costs two. Answers
+ *     are cached per (rest, chainId) for `ttlMs`; `forceRefresh` bypasses the cache.
+ * Throws (never guesses) when a legacy network has no `rest` or a query fails.
  */
 export async function resolveSignBytesVersion({
   chainId, rest, signBytesVersion = 'auto', fetch = globalThis.fetch, ttlMs = 60_000, forceRefresh = false,
@@ -138,15 +153,23 @@ export async function resolveSignBytesVersion({
   if (typeof fetch !== 'function') {
     throw new Error(`Cannot query ${base}: no fetch implementation available; ${hint}.`);
   }
-  const url = `${base}/cosmos/upgrade/v1beta1/applied_plan/${SIGN_BYTES_V2_UPGRADE}`;
+  const plans = `${base}/cosmos/upgrade/v1beta1/applied_plan/{${SIGN_BYTES_V2_UPGRADES.join(',')}}`;
   let version;
   try {
-    const res = await fetch(url, { headers: { accept: 'application/json' } });
-    if (!res || !res.ok) throw new Error(`HTTP ${res ? res.status : 'no response'}`);
-    const body = await res.json();
-    version = signBytesVersionFor(chainId, body?.height ?? '0');
+    // Ask for every plan name; the first positive height decides (v2). Only when
+    // ALL of them answer 0 / {} is the network still on v1.
+    let applied = 0n;
+    for (const name of SIGN_BYTES_V2_UPGRADES) {
+      const url = `${base}/cosmos/upgrade/v1beta1/applied_plan/${name}`;
+      const res = await fetch(url, { headers: { accept: 'application/json' } });
+      if (!res || !res.ok) throw new Error(`HTTP ${res ? res.status : 'no response'} for ${name}`);
+      const body = await res.json();
+      applied = toHeight(body?.height ?? '0');
+      if (applied > 0n) break;
+    }
+    version = signBytesVersionFor(chainId, applied);
   } catch (e) {
-    throw new Error(`Cannot determine the hybrid sign-bytes form for ${chainId} from ${url} (${e && e.message ? e.message : e}); ${hint}.`);
+    throw new Error(`Cannot determine the hybrid sign-bytes form for ${chainId} from ${plans} (${e && e.message ? e.message : e}); ${hint}.`);
   }
   cache.set(key, { version, at: Date.now() });
   return version;
