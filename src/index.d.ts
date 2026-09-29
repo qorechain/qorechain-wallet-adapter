@@ -134,3 +134,68 @@ export function registerEthAuthenticatorMsg(p: { owner: string; account?: string
 export function buildMetaMaskExecuteEvm(p: { provider: any; address: string; relayer: string; chainId: string; account: string; to?: string; value?: string; data?: Uint8Array; gasLimit?: number | bigint; nonce: number | bigint }): Promise<{ typeUrl: string; value: any }>;
 /** MetaMask (EIP-191 personal_sign) → MsgExecuteCosmos ready for the relayer. */
 export function buildMetaMaskExecuteCosmos(p: { provider: any; address: string; relayer: string; chainId: string; account: string; to: string; amount: string; nonce: number | bigint }): Promise<{ typeUrl: string; value: any }>;
+
+// --- v3.2.0 EVM-lane post-quantum authorisation window (requires chain >= v3.2.0) ---
+//
+// From v3.2.0 an EVM transaction is admitted only from an account that holds a
+// registered post-quantum key AND an open, unexhausted window. Nothing in this
+// package opens a window on its own: a wallet must show an explicit
+// authorisation step carrying the three limits.
+export const MSG_OPEN_EVM_WINDOW_TYPE_URL: '/qorechain.pqc.v1.MsgOpenEVMWindow';
+export const MSG_CLOSE_EVM_WINDOW_TYPE_URL: '/qorechain.pqc.v1.MsgCloseEVMWindow';
+/** 17280. NOT "about 24 hours": diana ~1.03 s/block (≈5 h), mainnet ~3.1 s (≈15 h). */
+export const MAX_EVM_WINDOW_BLOCKS: bigint;
+/** 1000. */
+export const MAX_EVM_WINDOW_TXS: bigint;
+export const EVM_WINDOW_QUERY_PATH: '/qorechain/pqc/v1/evm_window';
+
+/** An Any-encoded message, the shape `QoreChainSigner.signHybrid` carries. */
+export interface AnyMsg { typeUrl: string; value: Uint8Array }
+export type WindowAmount = number | bigint | string;
+export interface EvmWindowBounds {
+  /** 1..17280, required. */
+  blocks: WindowAmount;
+  /** 1..1000, required. */
+  maxTxs: WindowAmount;
+  /** > 0, uqor. Bounds transferred value PLUS the maximum fee (gas limit x gas fee cap). Required. */
+  maxValue: WindowAmount;
+}
+/** MsgOpenEVMWindow, Any-encoded. Validates the bounds client-side first. */
+export function openEvmWindowMsg(p: EvmWindowBounds & { sender: string }): AnyMsg;
+/** MsgCloseEVMWindow, Any-encoded. Takes effect in the same block. */
+export function closeEvmWindowMsg(p: { sender: string }): AnyMsg;
+/** Inverse of the composers, for confirmation screens and tests. */
+export function decodeEvmWindowMsg(msg: AnyMsg): { sender: string; blocks?: bigint; maxTxs?: bigint; maxValue?: string };
+/** The chain's ValidateBasic, client-side. Throws with a message naming the bound. */
+export function validateEvmWindowBounds(b: EvmWindowBounds, fn?: string): { blocks: bigint; maxTxs: bigint; maxValue: string };
+
+/** Typed window status. Every number is a BigInt — the value fields are cosmos.Int uqor and exceed 2^53. */
+export interface EvmWindowStatus {
+  found: boolean;
+  live: boolean;
+  openedHeight: bigint | null;
+  expiryHeight: bigint | null;
+  maxTxs: bigint | null;
+  usedTxs: bigint | null;
+  maxValue: bigint | null;
+  usedValue: bigint | null;
+  remainingBlocks: bigint | null;
+  remainingTxs: bigint | null;
+  remainingValue: bigint | null;
+}
+/** GET {rest}/qorechain/pqc/v1/evm_window/{address}. 200 + found:false when absent, so it is safe to poll. */
+export function fetchEvmWindow(p: { rest: string; address: string; fetch?: typeof globalThis.fetch }): Promise<EvmWindowStatus>;
+/** Parse a QueryEVMWindowResponse body with your own transport. */
+export function parseEvmWindow(body: any): EvmWindowStatus;
+
+export type EvmWindowRejectionKind = 'no-window' | 'exhausted' | 'invalid' | 'no-pqc-key';
+export const EVM_WINDOW_REJECTION_KINDS: readonly EvmWindowRejectionKind[];
+/** Kind → what the wallet should tell the user to do. */
+export const EVM_WINDOW_REMEDIES: Readonly<Record<EvmWindowRejectionKind, string>>;
+/**
+ * Classify an EVM-lane refusal from codespace `pqc` codes 26/27/28 AND from the
+ * chain's own text (the only thing that survives EVM JSON-RPC). Returns the kind,
+ * or null when the error is something else. Text wins: code 26 covers both "no
+ * window" and "no registered post-quantum key", which have different remedies.
+ */
+export function isEvmWindowRejection(errOrResult: unknown): EvmWindowRejectionKind | null;
