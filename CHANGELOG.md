@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+Client support for chain v3.2.3. To be released after the network release is
+tagged.
+
+### Added
+
+- `evmAuthSignBytesV2`: the `MsgExecuteEVM` digest from chain v3.2.3, which also
+  binds the call's gas limit (must be non-zero). `resolveEvmAuthDigestVersion`
+  returns the form the network verifies (`v2` once it has applied v3.2.3), and
+  `buildPhantomExecuteEvm` / `buildMetaMaskExecuteEvm` take
+  `digestVersion: 'v1' | 'v2'` (default `'v1'`).
+
+### Fixed
+
+- Documentation of the `MsgExecuteEVM` nonce: it is the linked key's
+  authenticator sequence, not the account's EVM nonce.
+
 ## [0.3.0]
 
 ### Removed

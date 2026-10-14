@@ -61,7 +61,7 @@ export {
 } from './sign-eth.js';
 // v3.1.85 authenticator lanes (EVM + Native/Cosmos) + PQC key rotation.
 export {
-  evmAuthSignBytes, cosmosAuthSignBytes, rotationSignBytes,
+  evmAuthSignBytes, evmAuthSignBytesV2, resolveEvmAuthDigestVersion, cosmosAuthSignBytes, rotationSignBytes,
   executeEvmMsg, executeCosmosMsg, revokeAuthenticatorMsg, rotatePqcKeyMsg,
   buildPhantomExecuteEvm, buildPhantomExecuteCosmos,
   registerEthAuthenticatorMsg, buildMetaMaskExecuteEvm, buildMetaMaskExecuteCosmos,

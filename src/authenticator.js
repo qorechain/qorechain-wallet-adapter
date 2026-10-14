@@ -81,10 +81,13 @@ function toHexLower(bytes) {
  * `data` is the raw calldata (Uint8Array). `pubkey` is the authenticator's raw
  * public key (32 bytes for ed25519). Returns Uint8Array(32) — what the wallet signs.
  *
- * NONCE: the account's CURRENT EVM nonce (eth_getTransactionCount(account0x)).
- * In production the relayer is a DIFFERENT account than the owner, so the relayer
- * envelope does NOT bump the account's nonce — use the current value as-is. (Only
- * if relayer === owner does the envelope pre-increment it, needing current+1.)
+ * NONCE: the linked key's authenticator sequence — a counter the chain keeps for
+ * each (account, pubkey), starting at 0 and incremented by each successful
+ * MsgExecuteEVM. It is NOT the account's EVM nonce (the chain has checked the
+ * per-key counter since v3.2.0). There is no query for it yet, so track it per
+ * linked key; a mismatch is refused with abstractaccount code 11.
+ *
+ * From chain v3.2.3 the chain verifies evmAuthSignBytesV2 instead.
  */
 export async function evmAuthSignBytes({ chainId, account, pubkey, to = '', value = '0', data = new Uint8Array(0), nonce }) {
   const body = concat([
@@ -94,6 +97,50 @@ export async function evmAuthSignBytes({ chainId, account, pubkey, to = '', valu
     be64(nonce),
   ]);
   return sha256(body);
+}
+
+/**
+ * evmAuthSignBytesV2 is the v2 digest of a MsgExecuteEVM (chain v3.2.3,
+ * abstractaccount-hardening):
+ *   sha256( "qorechain-evm-auth-v2"
+ *           ‖ LP(chainId) ‖ LP(account) ‖ LP(pubkey)
+ *           ‖ LP(to) ‖ LP(value) ‖ LP(data) ‖ BE64(nonce) ‖ BE64(gasLimit) )
+ * v1 left the gas limit to whoever relayed the message. The chain verifies
+ * exactly one form per block: v1 below the v3.2.3 upgrade, v2 from it — pick with
+ * resolveEvmAuthDigestVersion. gasLimit must be non-zero.
+ */
+export async function evmAuthSignBytesV2({ chainId, account, pubkey, to = '', value = '0', data = new Uint8Array(0), nonce, gasLimit }) {
+  if (gasLimit === undefined || BigInt(gasLimit) <= 0n) {
+    throw new Error('gasLimit must be set (non-zero): the v2 digest binds it and the chain refuses 0');
+  }
+  const body = concat([
+    enc.encode('qorechain-evm-auth-v2'),
+    lp(toBytes(chainId)), lp(toBytes(account)), lp(toBytes(pubkey)),
+    lp(toBytes(to)), lp(toBytes(value)), lp(toBytes(data)),
+    be64(nonce), be64(gasLimit),
+  ]);
+  return sha256(body);
+}
+
+/**
+ * resolveEvmAuthDigestVersion returns the MsgExecuteEVM digest the network
+ * verifies now: 'v2' once it has applied the v3.2.3 upgrade, 'v1' before. Throws
+ * when the node cannot be asked — never guess, the other form is refused.
+ */
+export async function resolveEvmAuthDigestVersion({ rest, fetch: fetchImpl = globalThis.fetch }) {
+  const url = `${String(rest).replace(/\/+$/, '')}/cosmos/upgrade/v1beta1/applied_plan/v3.2.3`;
+  const res = await fetchImpl(url);
+  if (!res.ok) throw new Error(`applied_plan query failed: HTTP ${res.status} from ${url}`);
+  const body = await res.json();
+  // Mainnet answers {"height":"0"} for a plan it has not applied: parse the number.
+  const height = BigInt(body?.height || 0);
+  return height > 0n ? 'v2' : 'v1';
+}
+
+async function evmDigest({ digestVersion = 'v1', ...input }) {
+  if (digestVersion === 'v2') return evmAuthSignBytesV2(input);
+  if (digestVersion !== 'v1') throw new Error(`digestVersion must be 'v1' or 'v2', got ${JSON.stringify(digestVersion)}`);
+  return evmAuthSignBytes(input);
 }
 
 /**
@@ -198,9 +245,9 @@ function walletPubkey(wallet) {
  * wallet and returns a MsgExecuteEVM ready for the relayer to broadcast. The
  * relayer address is the fee payer (a DIFFERENT account than `account`).
  */
-export async function buildPhantomExecuteEvm({ wallet, relayer, chainId, account, to = '', value = '0', data = new Uint8Array(0), gasLimit = 100000, nonce }) {
+export async function buildPhantomExecuteEvm({ wallet, relayer, chainId, account, to = '', value = '0', data = new Uint8Array(0), gasLimit = 100000, nonce, digestVersion = 'v1' }) {
   const pubkey = walletPubkey(wallet);
-  const digest = await evmAuthSignBytes({ chainId, account, pubkey, to, value, data, nonce });
+  const digest = await evmDigest({ digestVersion, chainId, account, pubkey, to, value, data, nonce, gasLimit });
   const { signature } = await wallet.signMessage(digest);
   return executeEvmMsg({ relayer, account, scheme: 'ed25519', pubkey, signature, to, value, data, gasLimit, nonce });
 }
@@ -255,9 +302,9 @@ export function registerEthAuthenticatorMsg({ owner, account = owner, ethAddress
 }
 
 /** buildMetaMaskExecuteEvm: MetaMask (EIP-191) → MsgExecuteEVM ready for the relayer. */
-export async function buildMetaMaskExecuteEvm({ provider, address, relayer, chainId, account, to = '', value = '0', data = new Uint8Array(0), gasLimit = 100000, nonce }) {
+export async function buildMetaMaskExecuteEvm({ provider, address, relayer, chainId, account, to = '', value = '0', data = new Uint8Array(0), gasLimit = 100000, nonce, digestVersion = 'v1' }) {
   const pubkey = hexToBytes(address); // 20-byte eth address = the authenticator pubkey
-  const digest = await evmAuthSignBytes({ chainId, account, pubkey, to, value, data, nonce });
+  const digest = await evmDigest({ digestVersion, chainId, account, pubkey, to, value, data, nonce, gasLimit });
   const signature = await ethPersonalSign(provider, address, digest);
   return executeEvmMsg({ relayer, account, scheme: 'secp256k1', pubkey, signature, to, value, data, gasLimit, nonce });
 }

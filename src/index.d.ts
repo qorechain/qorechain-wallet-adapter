@@ -115,6 +115,10 @@ export class QoreChainSigner {
 export interface PqcKeypairFull { publicKey: Uint8Array; secretKey: Uint8Array; }
 /** 32-byte digest an authenticator signs to authorize a MsgExecuteEVM. */
 export function evmAuthSignBytes(p: { chainId: string; account: string; pubkey: Uint8Array; to?: string; value?: string; data?: Uint8Array; nonce: number | bigint }): Promise<Uint8Array>;
+/** The v2 MsgExecuteEVM digest (chain v3.2.3): binds gasLimit, which must be non-zero. */
+export function evmAuthSignBytesV2(p: { chainId: string; account: string; pubkey: Uint8Array; to?: string; value?: string; data?: Uint8Array; nonce: number | bigint; gasLimit: number | bigint }): Promise<Uint8Array>;
+/** 'v2' once the network has applied v3.2.3, 'v1' before. Throws when the node cannot be asked. */
+export function resolveEvmAuthDigestVersion(p: { rest: string; fetch?: typeof fetch }): Promise<'v1' | 'v2'>;
 /** 32-byte digest an authenticator signs to authorize a MsgExecuteCosmos. */
 export function cosmosAuthSignBytes(p: { chainId: string; account: string; pubkey: Uint8Array; to: string; amount: string; nonce: number | bigint }): Promise<Uint8Array>;
 /** Domain-separated STRING both keys sign for a MsgRotatePQCKey (sign utf8 of it). */
@@ -128,7 +132,7 @@ export function revokeAuthenticatorMsg(p: { owner: string; account?: string; sch
 /** MsgRotatePQCKey (sender-signed hybrid with the OLD key). */
 export function rotatePqcKeyMsg(p: { sender: string; oldPublicKey: Uint8Array; newPublicKey: Uint8Array; oldSignature: Uint8Array; newSignature: Uint8Array }): { typeUrl: string; value: any };
 /** Phantom (ed25519) → MsgExecuteEVM ready for the relayer. */
-export function buildPhantomExecuteEvm(p: { wallet: any; relayer: string; chainId: string; account: string; to?: string; value?: string; data?: Uint8Array; gasLimit?: number | bigint; nonce: number | bigint }): Promise<{ typeUrl: string; value: any }>;
+export function buildPhantomExecuteEvm(p: { wallet: any; relayer: string; chainId: string; account: string; to?: string; value?: string; data?: Uint8Array; gasLimit?: number | bigint; nonce: number | bigint; digestVersion?: 'v1' | 'v2' }): Promise<{ typeUrl: string; value: any }>;
 /** Phantom (ed25519) → MsgExecuteCosmos ready for the relayer. */
 export function buildPhantomExecuteCosmos(p: { wallet: any; relayer: string; chainId: string; account: string; to: string; amount: string; nonce: number | bigint }): Promise<{ typeUrl: string; value: any }>;
 /** Build a MsgRotatePQCKey to migrate a key between derivations (default legacy→canonical). Broadcast cosigned with the OLD keypair. */
@@ -138,7 +142,7 @@ export function derivePqcLegacy(mnemonic: string): PqcKeypairFull;
 /** Link a MetaMask / EVM key (by 0x address) as a scoped authenticator (owner-signed). */
 export function registerEthAuthenticatorMsg(p: { owner: string; account?: string; ethAddress: string; permissions?: string[]; expiryUnix: number | bigint; label?: string }): { typeUrl: string; value: any };
 /** MetaMask (EIP-191 personal_sign) → MsgExecuteEVM ready for the relayer. `provider` is EIP-1193. */
-export function buildMetaMaskExecuteEvm(p: { provider: any; address: string; relayer: string; chainId: string; account: string; to?: string; value?: string; data?: Uint8Array; gasLimit?: number | bigint; nonce: number | bigint }): Promise<{ typeUrl: string; value: any }>;
+export function buildMetaMaskExecuteEvm(p: { provider: any; address: string; relayer: string; chainId: string; account: string; to?: string; value?: string; data?: Uint8Array; gasLimit?: number | bigint; nonce: number | bigint; digestVersion?: 'v1' | 'v2' }): Promise<{ typeUrl: string; value: any }>;
 /** MetaMask (EIP-191 personal_sign) → MsgExecuteCosmos ready for the relayer. */
 export function buildMetaMaskExecuteCosmos(p: { provider: any; address: string; relayer: string; chainId: string; account: string; to: string; amount: string; nonce: number | bigint }): Promise<{ typeUrl: string; value: any }>;
 
