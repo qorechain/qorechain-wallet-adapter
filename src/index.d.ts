@@ -87,7 +87,14 @@ export function isHybridSignBytesRejection(errOrResult: unknown): boolean;
 /** TxRaw bytes plus the sign-bytes form that was used. */
 export type SignedTxBytes = Uint8Array & { signBytesVersion: SignBytesVersion };
 export function encodePqcHybridSignature(algorithmId: number, sig: Uint8Array): Uint8Array;
-export function derivePqcKeyFromWallet(wallet: any, chainId: string, address: string, domain?: string): Promise<{ publicKey: Uint8Array; secretKey: Uint8Array }>;
+/**
+ * @deprecated WITHDRAWN in 0.3.0 — always throws. It derived the account's
+ * ML-DSA-87 key from a wallet signature over a fixed public message, so any page
+ * that obtained that signature, or anyone holding the classical key, rebuilt the
+ * key. Sign through QoreX (`qorexSignAndBroadcast`) instead.
+ */
+export function derivePqcKeyFromWallet(...args: unknown[]): Promise<never>;
+
 export function qoreChainInfo(opts?: { chainId?: string; rpc?: string; rest?: string }): any;
 export class QoreChainSigner {
   constructor(opts: {
@@ -199,3 +206,93 @@ export const EVM_WINDOW_REMEDIES: Readonly<Record<EvmWindowRejectionKind, string
  * window" and "no registered post-quantum key", which have different remedies.
  */
 export function isEvmWindowRejection(errOrResult: unknown): EvmWindowRejectionKind | null;
+
+// ─── QoreX (wallet-side signing for QoreChain) ──────────────────────────────
+
+export interface QorexMessage {
+  typeUrl: string;
+  /** Protobuf bytes: Uint8Array, number[] or a base64 string. */
+  value: Uint8Array | number[] | string;
+}
+
+export interface QorexRequest {
+  /** Must equal the wallet's active network; a dApp cannot switch it. */
+  chainId: 'qorechain-vladi' | 'qorechain-diana';
+  messages: QorexMessage[];
+  /** Optional, at most 256 bytes. */
+  memo?: string;
+  /** Optional; 100_000–5_000_000, wallet default 400_000. */
+  gasLimit?: number;
+}
+
+export interface QorexResult {
+  txHash: string;
+  /** The chain's delivery code; 0 means it landed. */
+  code: number;
+  height?: number;
+  shield?: unknown;
+}
+
+export interface QorexNativeProvider {
+  capabilities?: string[];
+  enable(chainId: string): Promise<void>;
+  signAndBroadcast(req: QorexRequest): Promise<QorexResult>;
+}
+
+export const QOREX_SIGN_AND_BROADCAST: 'signAndBroadcast';
+export const QOREX_CHAIN_IDS: readonly string[];
+export const QOREX_REFUSED_TYPE_URLS: readonly string[];
+export const QOREX_MAX_MESSAGES: number;
+export const QOREX_MAX_MEMO_BYTES: number;
+export const QOREX_MIN_GAS_LIMIT: number;
+export const QOREX_MAX_GAS_LIMIT: number;
+
+export function getQorexNative(): QorexNativeProvider | undefined;
+export function hasQorexSignAndBroadcast(provider?: QorexNativeProvider): boolean;
+export function connectQorex(opts: {
+  chainId: string;
+  provider?: QorexNativeProvider;
+}): Promise<QorexNativeProvider>;
+export function validateQorexRequest(req: QorexRequest): QorexRequest & { messages: Array<{ typeUrl: string; value: Uint8Array | string }> };
+export function qorexSignAndBroadcast(
+  req: QorexRequest & { provider?: QorexNativeProvider },
+): Promise<QorexResult>;
+export function isQorexRejection(err: unknown): boolean;
+
+// ─── PQC recovery codes ─────────────────────────────────────────────────────
+
+/** "QRC1" — the prefix that names and versions a recovery code. */
+export const PQC_RECOVERY_CODE_PREFIX: 'QRC1';
+/** A new QRC1-… recovery code (256 bits, Crockford base32, 24-bit checksum). Show once. */
+export function generatePqcRecoveryCode(): Promise<string>;
+/** The account's ML-DSA-87 keypair, derived from its recovery code and qor1… address. */
+export function pqcKeyFromRecoveryCode(
+  code: string,
+  address: string,
+): Promise<{ publicKey: Uint8Array; secretKey: Uint8Array }>;
+/** True for a well-formed code whose checksum matches. */
+export function isValidRecoveryCode(code: string): boolean;
+/** The 56 data characters of a code as typed; throws a UI-ready message when malformed. */
+export function normalizeRecoveryCode(code: string): string;
+
+/**
+ * Rotate an account off a key minted by the withdrawn derivePqcKeyFromWallet.
+ * Returns a MsgRotatePQCKey; never returns the old secret. Refuses unless the
+ * re-derived key is exactly `registeredPublicKey`.
+ */
+export function rotateFromLegacyWalletKey(p: {
+  wallet: { signArbitrary(chainId: string, address: string, data: string): Promise<{ signature: string | Uint8Array }> };
+  chainId: string;
+  address: string;
+  registeredPublicKey: Uint8Array | string;
+  newKeypair: { publicKey: Uint8Array; secretKey: Uint8Array };
+  algorithmId?: number;
+  rotationChainId?: string;
+  domain?: string;
+}): Promise<{ typeUrl: '/qorechain.pqc.v1.MsgRotatePQCKey'; value: Record<string, unknown> }>;
+
+/** Decode to exactly `length` bytes (bytes, byte array, hex or base64), or throw. */
+export function toExactBytes(value: Uint8Array | number[] | string, length: number, what: string): Uint8Array;
+export const SECP256K1_COMPRESSED_PUBKEY_LENGTH: 33;
+export const ML_DSA_87_PUBLIC_KEY_LENGTH: 2592;
+export const ML_DSA_87_SIGNATURE_LENGTH: 4627;

@@ -117,12 +117,130 @@ from another codespace as this case.
 + classical via a cosmjs signer standing in for Keplr) **committed with code 0**
 against a live 7-validator QoreChain — the PQC ante accepted it.
 
-## Usage (Keplr)
+## Sending a QoreChain transaction from a dApp: use QoreX
+
+A page cannot build a QoreChain transaction. Every transaction from an account
+with a registered post-quantum key carries **two** signatures — secp256k1 and
+ML-DSA-87 — and only the wallet holds the ML-DSA key. `signDirect` does not help
+either: it signs a `SignDoc` the page built, and QoreChain refuses one whose body
+lacks the hybrid extension, which a page cannot produce.
+
+So send **messages** and let QoreX build, sign and broadcast. It shows the user
+the decoded messages and the fee, registers the account's PQC key if this is its
+first transaction, and resolves with the result.
+
+Requires QoreX extension ≥ 0.3.5 or app ≥ 1.1.5. Feature-detect rather than
+version-check — `capabilities` says what the installed build can actually do.
 
 ```js
 import {
-  QoreChainSigner, qoreChainInfo, derivePqcKeyFromWallet,
+  hasQorexSignAndBroadcast, qorexSignAndBroadcast, isQorexRejection,
 } from '@qorechain/wallet-adapter';
+import { MsgSend } from 'cosmjs-types/cosmos/bank/v1beta1/tx.js';
+
+if (!hasQorexSignAndBroadcast()) {
+  // Absent or too old — the remedy is installing or updating QoreX.
+  throw new Error('Install or update QoreX to transact on QoreChain');
+}
+
+try {
+  const { txHash, code, height } = await qorexSignAndBroadcast({
+    chainId: 'qorechain-vladi',          // must equal the wallet's active network
+    messages: [{
+      typeUrl: '/cosmos.bank.v1beta1.MsgSend',
+      value: MsgSend.encode(MsgSend.fromPartial({ fromAddress, toAddress, amount })).finish(),
+    }],
+    memo: '',                            // optional, ≤ 256 bytes
+    gasLimit: 300_000,                   // optional; 100k–5M, wallet default 400k
+  });
+  if (code !== 0) throw new Error(`rejected by the chain with code ${code}`);
+} catch (err) {
+  if (isQorexRejection(err)) return;     // the user declined; not a failure
+  throw err;
+}
+```
+
+Things worth knowing before you build a flow on it:
+
+- **`value` is protobuf bytes**, not a decoded message: `Uint8Array`, `number[]`
+  or a base64 string. The wallet signs them exactly as given and does not
+  re-encode, so encode with the same types you would use to broadcast yourself.
+  Passing a plain object throws here, with the fix in the message, rather than
+  producing a transaction that means nothing.
+- **A dApp cannot switch the network.** `chainId` must equal the wallet's active
+  one — `qorechain-vladi`, or `qorechain-diana` when the user has switched to
+  testnet themselves. Ask the user to switch; you cannot.
+- **PQC key management is refused** (`MsgRegisterPQCKey`, `…V2`,
+  `MsgMigratePQCKey`, `MsgRotatePQCKey`, and `authz.MsgExec` wrapping them). The
+  wallet owns the account's key. Registration happens on its own, on the
+  account's first transaction.
+- **1–32 messages per call.** `connectQorex({ chainId })` on its own prompts the
+  connection without sending anything; `qorexSignAndBroadcast` calls it for you.
+- `code` is the chain's delivery code — `0` means it landed. A user declining
+  throws, and `isQorexRejection(err)` tells that apart from a real failure.
+
+`validateQorexRequest` is exported if you want to check a request before
+assembling a UI around it; `qorexSignAndBroadcast` runs it for you.
+
+## Withdrawn in 0.3.0: `derivePqcKeyFromWallet`
+
+`derivePqcKeyFromWallet` now throws. A dApp should not hold the account's ML-DSA
+key at all — send messages to QoreX and let the wallet build, sign and broadcast
+(`qorexSignAndBroadcast`, above).
+
+If an account already registered a key with it, rotate that key with
+`rotateFromLegacyWalletKey` (below), onto a key derived from a recovery code or
+managed by QoreX. Security details will be published separately.
+
+## PQC recovery codes
+
+The account's ML-DSA-87 key needs a secret the classical key says nothing about,
+or the post-quantum half of the hybrid signature protects nothing. A recovery
+code is that secret: random, held by the user, and deliberately unlike a seed
+phrase so nobody imports it into a wallet by mistake.
+
+```js
+import { generatePqcRecoveryCode, pqcKeyFromRecoveryCode, isValidRecoveryCode } from '@qorechain/wallet-adapter';
+
+const code = await generatePqcRecoveryCode();
+// QRC1-GZF4-W91N-3A4B-…   — show ONCE, have the user write it down,
+//                           never store it next to the seed phrase.
+
+const { publicKey, secretKey } = await pqcKeyFromRecoveryCode(code, account.address);
+```
+
+- **256 bits of entropy.** ML-DSA-87 is NIST category 5; Grover halves a key's
+  search space, so 128 bits would undercut the key it protects.
+- **Crockford base32**, case-insensitive, with no I, L, O or U. The letters people
+  confuse are read as what they meant (O → 0, I/L → 1), and dashes, spaces and the
+  `QRC1-` prefix are optional when typing it back.
+- **A 24-bit checksum.** A mistyped character is refused with a message, rather
+  than silently deriving a key that matches nothing. Use `isValidRecoveryCode` to
+  validate as the user types.
+- **Bound to the account address**, so one code cannot stand in for another
+  account. An upper-case address is the same account.
+
+### Rotating off a key minted from a wallet signature
+
+```js
+import { rotateFromLegacyWalletKey } from '@qorechain/wallet-adapter';
+
+const msg = await rotateFromLegacyWalletKey({
+  wallet: window.keplr, chainId, address,
+  registeredPublicKey,   // what /qorechain/pqc/v1/account/{address} reports — check `found`, not the HTTP status
+  newKeypair: await pqcKeyFromRecoveryCode(code, address),
+});
+// broadcast msg from the account (MsgRotatePQCKey)
+```
+
+It refuses unless the key it re-derives is exactly the one registered, so it can
+move an account off a weak key but never mint one, and it never returns the old
+secret key.
+
+## Usage (Keplr)
+
+```js
+import { QoreChainSigner, qoreChainInfo } from '@qorechain/wallet-adapter';
 
 // 1. Register the chain with the wallet (one click for the user).
 await window.keplr.experimentalSuggestChain(qoreChainInfo({ rpc, rest }));
@@ -130,8 +248,11 @@ await window.keplr.enable('qorechain-diana');
 const signer = window.keplr.getOfflineSigner('qorechain-diana');
 const [account] = await signer.getAccounts();
 
-// 2. Derive the user's ML-DSA-87 key, bound to their wallet (no mnemonic export).
-const pqc = await derivePqcKeyFromWallet(window.keplr, 'qorechain-diana', account.address);
+// 2. Obtain the account's ML-DSA-87 key. `derivePqcKeyFromWallet` used to do
+//    this from a wallet signature and was WITHDRAWN in 0.3.0 — see the warning
+//    below. A dApp should not hold this key at all: send messages through QoreX
+//    (`qorexSignAndBroadcast`) and let the wallet sign.
+const pqc = /* a keypair this code legitimately holds — not derived from a signature */;
 // (first time only) register the PQC public key on-chain via MsgRegisterPQCKey —
 // that message is classical-exempt, so the wallet can sign it normally.
 
@@ -170,7 +291,8 @@ Keplr / any-signDirect adapter + PQC framing:
 - `new QoreChainSigner({ wallet, chainId, address, pubkeySecp256k1, accountNumber, pqc, rest?, signBytesVersion? = 'auto', fetch? })`.
 - `QoreChainSigner#signHybrid({ messages, fee, sequence, memo?, timeoutHeight?, signBytesVersion? })` → `TxRaw` bytes with `.signBytesVersion`.
 - `QoreChainSigner#refreshSignBytesVersion()` → re-resolves, bypassing the cache.
-- `derivePqcKeyFromWallet(wallet, chainId, address)` — deterministic ML-DSA-87 key from a wallet signature.
+- `derivePqcKeyFromWallet(...)` — **WITHDRAWN in 0.3.0, always throws.** See the warning below.
+- `deriveLegacyWalletSignatureKey(wallet, chainId, address)` — recomputes a key minted by that withdrawn derivation, **only** to prove ownership while rotating away from it.
 - `hybridSignBytesV1(b0, auth)`, `hybridSignBytesV2(chainId, b0, auth)`, `hybridSignBytes(version, chainId, b0, auth)` — the two sign-bytes forms and a dispatcher (version required; the old implicit `frame()` is removed).
 - `signBytesVersionFor(chainId, v2AppliedHeight)`, `resolveSignBytesVersion({ chainId, rest?, signBytesVersion?, fetch?, ttlMs?, forceRefresh? })`, `clearSignBytesCache()`, `isHybridSignBytesRejection(errOrResult)`.
 - Constants `HYBRID_SIGN_BYTES_V2_DOMAIN`, `SIGN_BYTES_V2_UPGRADES` (`["v3.2.0", "v3.1.98"]` — every plan name that switches a network to v2), `SIGN_BYTES_V2_UPGRADE` (`"v3.2.0"`, the primary name = `SIGN_BYTES_V2_UPGRADES[0]`), `LEGACY_SIGN_BYTES_CHAINS`.

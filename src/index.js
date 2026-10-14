@@ -27,6 +27,17 @@
 import { mldsa, shake256 } from '@qorechain/pqc';
 import { encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 } from './framing.js';
 import { hybridSignBytes, resolveSignBytesVersion } from './signbytes.js';
+import { rotationSignBytes, rotatePqcKeyMsg } from './authenticator.js';
+import {
+  toExactBytes, SECP256K1_COMPRESSED_PUBKEY_LENGTH, ML_DSA_87_PUBLIC_KEY_LENGTH,
+} from './bytes.js';
+// PQC recovery codes: a second, random secret the classical key says nothing
+// about, so the post-quantum half of the hybrid signature needs something the
+// classical half does not have.
+export {
+  generatePqcRecoveryCode, pqcKeyFromRecoveryCode, isValidRecoveryCode,
+  normalizeRecoveryCode, PQC_RECOVERY_CODE_PREFIX,
+} from './recovery.js';
 export { encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 };
 // Per-network hybrid sign-bytes (v1 legacy / v2) + resolver + rejection detector.
 export {
@@ -65,20 +76,119 @@ export {
   fetchEvmWindow, parseEvmWindow,
   isEvmWindowRejection, EVM_WINDOW_REJECTION_KINDS, EVM_WINDOW_REMEDIES,
 } from './evm-window.js';
+// QoreX: the wallet signs and broadcasts dApp-composed QoreChain messages. A
+// page cannot build a QoreChain transaction itself — only the wallet holds the
+// ML-DSA key the chain requires — so send messages, not a SignDoc.
+export {
+  QOREX_SIGN_AND_BROADCAST, QOREX_CHAIN_IDS, QOREX_REFUSED_TYPE_URLS,
+  QOREX_MAX_MESSAGES, QOREX_MAX_MEMO_BYTES, QOREX_MIN_GAS_LIMIT, QOREX_MAX_GAS_LIMIT,
+  getQorexNative, hasQorexSignAndBroadcast, connectQorex,
+  validateQorexRequest, qorexSignAndBroadcast, isQorexRejection,
+} from './qorex.js';
+export {
+  toExactBytes, SECP256K1_COMPRESSED_PUBKEY_LENGTH, ML_DSA_87_PUBLIC_KEY_LENGTH, ML_DSA_87_SIGNATURE_LENGTH,
+} from './bytes.js';
 import { TxBody, AuthInfo, TxRaw, SignerInfo, ModeInfo, Fee } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
 import { SignMode } from 'cosmjs-types/cosmos/tx/signing/v1beta1/signing.js';
 import { SignDoc } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
 import { PubKey } from 'cosmjs-types/cosmos/crypto/secp256k1/keys.js';
 
 
-// Deterministically derive an ML-DSA-87 keypair bound to the wallet, without ever
-// touching the mnemonic: the wallet ADR-36-signs a fixed message, and SHAKE-256 of
-// that signature seeds the keygen. The same wallet always yields the same PQC key.
-export async function derivePqcKeyFromWallet(wallet, chainId, address, domain = 'qorechain:pqc:v1') {
+// WITHDRAWN in 0.3.0. A dApp should not hold the account's ML-DSA key: sign
+// through QoreX (qorexSignAndBroadcast). An account that registered a key with
+// this function should rotate it with rotateFromLegacyWalletKey. Security details
+// will be published separately.
+export async function derivePqcKeyFromWallet() {
+  throw new Error(
+    'derivePqcKeyFromWallet was withdrawn in @qorechain/wallet-adapter 0.3.0. ' +
+      'Sign through QoreX instead (qorexSignAndBroadcast), which holds the ML-DSA key itself. ' +
+      'If an account already registered a key with it, rotate that key with rotateFromLegacyWalletKey.',
+  );
+}
+
+// The withdrawn derivation, kept private. Its only caller is
+// rotateFromLegacyWalletKey below, which never lets the secret key out.
+async function legacyWalletSignatureKey(wallet, chainId, address, domain) {
   const { signature } = await wallet.signArbitrary(chainId, address, domain);
-  const sigBytes = typeof signature === 'string' ? Uint8Array.from(Buffer.from(signature, 'base64')) : signature;
-  const seed = shake256(sigBytes, 32);
-  return mldsa.keygen(seed); // { publicKey, secretKey } — deterministic from seed
+  const sigBytes =
+    typeof signature === 'string' ? Uint8Array.from(Buffer.from(signature, 'base64')) : signature;
+  return mldsa.keygen(shake256(sigBytes, 32));
+}
+
+function sameBytes(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+/**
+ * Rotate an account OFF a PQC key minted by the withdrawn derivePqcKeyFromWallet,
+ * onto `newKeypair`. Returns a MsgRotatePQCKey ready to broadcast from the
+ * account; it never returns the old secret key.
+ *
+ * It refuses unless the key it re-derives is exactly `registeredPublicKey` — the
+ * key the chain holds for this account. So it can move an account off a weak key
+ * but cannot be used to create one: for any account that never registered a key
+ * this way, it produces nothing.
+ *
+ * The new key must come from somewhere that does not depend on the classical
+ * key — QoreX, or a recovery code — or the rotation just swaps one recoverable
+ * key for another.
+ *
+ * @param {object} p
+ * @param {object} p.wallet   Keplr-like: signArbitrary(chainId, address, data)
+ * @param {string} p.chainId  the network the key was minted for (the signature was
+ *                            not chain-bound, so this only matters to the wallet)
+ * @param {string} p.address  the account's qor1… address
+ * @param {Uint8Array|string} p.registeredPublicKey  the key the chain reports for it
+ * @param {{publicKey: Uint8Array, secretKey: Uint8Array}} p.newKeypair
+ * @param {number} [p.algorithmId=1]  ML-DSA-87
+ * @param {string} p.rotationChainId  the chain id the rotation is broadcast on
+ */
+export async function rotateFromLegacyWalletKey({
+  wallet,
+  chainId,
+  address,
+  registeredPublicKey,
+  newKeypair,
+  algorithmId = 1,
+  rotationChainId = chainId,
+  domain = 'qorechain:pqc:v1',
+} = {}) {
+  if (!registeredPublicKey) {
+    throw new Error(
+      'rotateFromLegacyWalletKey: registeredPublicKey is required — read it from the chain ' +
+        '(/qorechain/pqc/v1/account/{address}, and check `found`, not the HTTP status)',
+    );
+  }
+  if (!newKeypair?.publicKey || !newKeypair?.secretKey) {
+    throw new Error('rotateFromLegacyWalletKey: newKeypair { publicKey, secretKey } is required');
+  }
+  const registered = toExactBytes(registeredPublicKey, ML_DSA_87_PUBLIC_KEY_LENGTH, 'registeredPublicKey');
+  const legacy = await legacyWalletSignatureKey(wallet, chainId, address, domain);
+  if (!sameBytes(legacy.publicKey, registered)) {
+    throw new Error(
+      "rotateFromLegacyWalletKey: this account's registered PQC key was not minted by the " +
+        'withdrawn wallet-signature derivation, so there is nothing to rotate away from here',
+    );
+  }
+  const newPub = toExactBytes(newKeypair.publicKey, ML_DSA_87_PUBLIC_KEY_LENGTH, 'newKeypair.publicKey');
+  if (sameBytes(newPub, legacy.publicKey)) {
+    throw new Error('rotateFromLegacyWalletKey: the new key must differ from the legacy key');
+  }
+  const message = new TextEncoder().encode(
+    rotationSignBytes(rotationChainId, algorithmId, address, legacy.publicKey, newPub),
+  );
+  const msg = rotatePqcKeyMsg({
+    sender: address,
+    oldPublicKey: legacy.publicKey,
+    newPublicKey: newPub,
+    oldSignature: mldsa.sign(legacy.secretKey, message),
+    newSignature: mldsa.sign(newKeypair.secretKey, message),
+  });
+  legacy.secretKey.fill(0); // the old secret does not outlive this call
+  return msg;
 }
 
 export class QoreChainSigner {
@@ -89,6 +199,10 @@ export class QoreChainSigner {
   // signBytesVersion: 'auto' (default) | 'v1' | 'v2'.
   // fetch:  optional fetch implementation for the resolver (defaults to globalThis.fetch).
   constructor({ wallet, chainId, address, pubkeySecp256k1, accountNumber, pqc, rest, signBytesVersion = 'auto', fetch }) {
+    // Normalised here because cosmjs-types' encoder walks a STRING character by
+    // character into the bytes field and produces a broken AuthInfo without
+    // complaint. walletFromMnemonic().pubkey is a hex string.
+    pubkeySecp256k1 = toExactBytes(pubkeySecp256k1, SECP256K1_COMPRESSED_PUBKEY_LENGTH, 'pubkeySecp256k1');
     Object.assign(this, { wallet, chainId, address, pubkeySecp256k1, accountNumber, pqc, rest, signBytesVersion });
     if (fetch) this.fetch = fetch;
   }

@@ -24,6 +24,9 @@
 // personal_sign), so a MetaMask personal_sign will NOT verify — provide the
 // digest to a cosmos-style secp256k1 signer instead.
 
+import {
+  toExactBytes, ML_DSA_87_PUBLIC_KEY_LENGTH, ML_DSA_87_SIGNATURE_LENGTH,
+} from './bytes.js';
 import { mldsa, shake256 } from '@qorechain/pqc';
 
 // ---- byte helpers (match the chain's binary.BigEndian + length-prefix framing) ----
@@ -174,8 +177,12 @@ export function rotatePqcKeyMsg({ sender, oldPublicKey, newPublicKey, oldSignatu
     typeUrl: '/qorechain.pqc.v1.MsgRotatePQCKey',
     value: {
       sender,
-      oldPublicKey: toBytes(oldPublicKey), newPublicKey: toBytes(newPublicKey),
-      oldSignature: toBytes(oldSignature), newSignature: toBytes(newSignature),
+      // Strict: a hex string here used to be UTF-8-encoded by toBytes, sending the
+      // hex characters as ASCII — the same silent class of bug.
+      oldPublicKey: toExactBytes(oldPublicKey, ML_DSA_87_PUBLIC_KEY_LENGTH, 'oldPublicKey'),
+      newPublicKey: toExactBytes(newPublicKey, ML_DSA_87_PUBLIC_KEY_LENGTH, 'newPublicKey'),
+      oldSignature: toExactBytes(oldSignature, ML_DSA_87_SIGNATURE_LENGTH, 'oldSignature'),
+      newSignature: toExactBytes(newSignature, ML_DSA_87_SIGNATURE_LENGTH, 'newSignature'),
     },
   };
 }

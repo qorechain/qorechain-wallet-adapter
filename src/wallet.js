@@ -105,7 +105,7 @@ export async function walletFromMnemonic(mnemonic) {
  * To let an external wallet authorise spending, register its key as an
  * AUTHENTICATOR on a QoreChain account (MsgRegisterAuthenticator, with a
  * permission set and a SpendingRule) instead of pretending a signature is a
- * seed. Reported as QSR-2026-0049 and QSR-2026-0176.
+ * seed.
  *
  * Same 20-byte identity model as
  * `walletFromMnemonic`: qor1 / 0x / svm all resolve to the same account and the
