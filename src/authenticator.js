@@ -347,6 +347,14 @@ function derivePqcByScheme(scheme, account, mnemonic) {
  * @returns {{ msg: object, oldKeypair: {publicKey,secretKey}, newKeypair: {publicKey,secretKey} }}
  */
 export function rotatePqcKeyMsgFromMnemonic({ account, mnemonic, chainId, algorithmId = 1, oldDerivation = LEGACY, newDerivation = CANONICAL }) {
+  // The legacy shake256(mnemonic) derivation is not bound to the account: it is
+  // deprecated for NEW keys (as in the chain CLI). It stays valid as the OLD key.
+  if (newDerivation === LEGACY || newDerivation === 'mnemonic-only') {
+    throw new Error(
+      `the legacy (bridge) derivation is deprecated for new keys: rotate to the address-bound derivation ("${CANONICAL}"). ` +
+        'A legacy key can still be the OLD key of a rotation.',
+    );
+  }
   const oldKp = derivePqcByScheme(oldDerivation, account, mnemonic);
   const newKp = derivePqcByScheme(newDerivation, account, mnemonic);
   if (toHexLower(oldKp.publicKey) === toHexLower(newKp.publicKey)) {

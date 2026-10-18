@@ -20,10 +20,16 @@ tagged.
   messages inside it at any depth; a `MsgExec` that cannot be decoded is
   refused.
 
+### Deprecated
+
+- The legacy `shake256(mnemonic)` PQC derivation for new keys:
+  `rotatePqcKeyMsgFromMnemonic` refuses it as the new key, as the chain CLI does.
+  Rotating away from an existing legacy key still works.
+
 ### Fixed
 
-- Documentation of the `MsgExecuteEVM` nonce: it is the linked key's
-  authenticator sequence, not the account's EVM nonce.
+- Documentation of the `MsgExecuteEVM` nonce, in the code and the README: it is
+  the linked key's authenticator sequence, not the account's EVM nonce.
 
 ## [0.3.0]
 

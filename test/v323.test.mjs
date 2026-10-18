@@ -57,3 +57,14 @@ test('MetaMask builder signs the digest version it is told to', async () => {
   assert.notEqual(signed[0], signed[1]);
   await assert.rejects(buildMetaMaskExecuteEvm({ ...common, digestVersion: 'v3' }), /digestVersion/);
 });
+
+test('the legacy derivation is refused as the NEW key of a rotation', async () => {
+  const { rotatePqcKeyMsgFromMnemonic } = await import('../src/authenticator.js');
+  const base = {
+    account: 'qor1hkkxx5jmmw02wcz26c74lsp74qysj6h495vv0k',
+    mnemonic: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+    chainId: 'qorechain-diana',
+  };
+  assert.throws(() => rotatePqcKeyMsgFromMnemonic({ ...base, oldDerivation: 'adapter', newDerivation: 'bridge' }), /deprecated for new keys/);
+  assert.ok(rotatePqcKeyMsgFromMnemonic(base));
+});

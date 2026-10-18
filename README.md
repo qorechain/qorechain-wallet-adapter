@@ -410,8 +410,11 @@ authorizes actions on three lanes:
 ```js
 import { buildPhantomExecuteEvm, buildPhantomExecuteCosmos } from "@qorechain/wallet-adapter";
 
-// nonce = the account's CURRENT EVM nonce (eth_getTransactionCount(account0x)).
-// The relayer is a DIFFERENT account than the owner, so it does NOT pre-increment it.
+// nonce = the linked key's authenticator sequence: a counter the chain keeps in
+// its state per (account, linked key), 0 for a newly linked key and +1 after each
+// execution the chain accepts. It is NOT the account's EVM nonce
+// (eth_getTransactionCount). No query exposes it yet (one is planned); code 11
+// (abstractaccount) means the value sent is not the chain's.
 const evmMsg = await buildPhantomExecuteEvm({
   wallet: phantom, relayer: relayerAddr, chainId, account: qor1,
   to: "0x…", value: "100000000000000000" /* wei */, nonce });
