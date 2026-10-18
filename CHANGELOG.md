@@ -20,6 +20,10 @@ tagged.
   messages inside it at any depth; a `MsgExec` that cannot be decoded is
   refused.
 
+### Changed
+
+- Depends on `@qorechain/pqc ^0.2.1`. The `^0.1.1` range never resolved 0.2.x.
+
 ### Deprecated
 
 - The legacy `shake256(mnemonic)` PQC derivation for new keys:
