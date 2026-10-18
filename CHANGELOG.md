@@ -13,6 +13,13 @@ tagged.
   `buildPhantomExecuteEvm` / `buildMetaMaskExecuteEvm` take
   `digestVersion: 'v1' | 'v2'` (default `'v1'`).
 
+### Changed
+
+- `qorexSignAndBroadcast` / `validateQorexRequest` now accept authz `MsgExec`,
+  as QoreX does. The adapter decodes it and still refuses PQC key-management
+  messages inside it at any depth; a `MsgExec` that cannot be decoded is
+  refused.
+
 ### Fixed
 
 - Documentation of the `MsgExecuteEVM` nonce: it is the linked key's

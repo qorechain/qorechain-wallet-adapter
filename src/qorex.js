@@ -18,6 +18,8 @@
 // See qorex docs/DAPP-INTEGRATION.md for the wallet side of this contract.
 
 /** The provider object QoreX injects for the QoreChain (Cosmos) lane. */
+import { MsgExec } from 'cosmjs-types/cosmos/authz/v1beta1/tx.js';
+
 export function getQorexNative() {
   return globalThis.window?.qorex?.native;
 }
@@ -60,6 +62,37 @@ function fail(msg) {
   throw new Error(`qorexSignAndBroadcast: ${msg}`);
 }
 
+/** How deep nested MsgExec may go before the request is refused as unreadable. */
+const MAX_EXEC_DEPTH = 8;
+
+function execBytes(value) {
+  if (value instanceof Uint8Array) return value;
+  if (typeof globalThis.Buffer === 'function') return new Uint8Array(globalThis.Buffer.from(value, 'base64'));
+  return Uint8Array.from(globalThis.atob(value), (c) => c.charCodeAt(0));
+}
+
+// Refuse PQC key management carried inside authz MsgExec, at any depth. A
+// MsgExec that cannot be decoded is refused too: the wallet would not be able
+// to show what it does.
+function refuseKeyManagementInExec(value, where, depth) {
+  if (depth > MAX_EXEC_DEPTH) fail(`${where}: ${AUTHZ_EXEC} nested more than ${MAX_EXEC_DEPTH} deep`);
+  let exec;
+  try {
+    exec = MsgExec.decode(execBytes(value));
+  } catch {
+    fail(`${where}: ${AUTHZ_EXEC} could not be decoded`);
+  }
+  exec.msgs.forEach((inner, j) => {
+    if (QOREX_REFUSED_TYPE_URLS.includes(inner.typeUrl)) {
+      fail(
+        `${where}: ${AUTHZ_EXEC} carries ${inner.typeUrl}; PQC key management is refused inside authz ` +
+          '(QoreX manages the account\'s post-quantum key itself)',
+      );
+    }
+    if (inner.typeUrl === AUTHZ_EXEC) refuseKeyManagementInExec(inner.value, `${where}.msgs[${j}]`, depth + 1);
+  });
+}
+
 /** Accept the three shapes QoreX accepts, and reject anything else loudly. */
 function normaliseValue(value, i) {
   if (value instanceof Uint8Array) return value;
@@ -100,15 +133,14 @@ export function validateQorexRequest({ chainId, messages, memo = '', gasLimit } 
           'Key registration happens automatically on the account\'s first transaction.',
       );
     }
+    const value = normaliseValue(m.value, i);
     if (m.typeUrl === AUTHZ_EXEC) {
-      // The wallet also refuses key management nested inside authz. Say so here
-      // rather than let an inner message surface as a generic rejection.
-      fail(
-        `${AUTHZ_EXEC} carrying PQC key management is refused by the wallet; ` +
-          'send the inner messages directly if they are not key management.',
-      );
+      // authz is allowed, as in the wallet, but not as a way around the rule
+      // above: QoreX decodes MsgExec, shows it, and refuses PQC key management
+      // at any depth. Check the same here, so a dApp gets the reason up front.
+      refuseKeyManagementInExec(value, `messages[${i}]`, 1);
     }
-    return { typeUrl: m.typeUrl, value: normaliseValue(m.value, i) };
+    return { typeUrl: m.typeUrl, value };
   });
   if (typeof memo !== 'string') fail('memo must be a string');
   const memoBytes = new TextEncoder().encode(memo).length;

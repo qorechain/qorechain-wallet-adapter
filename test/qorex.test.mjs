@@ -106,12 +106,29 @@ test('PQC key management is refused locally, with the reason', () => {
       typeUrl,
     );
   }
+});
+
+test('authz MsgExec is allowed, but never as a way to send PQC key management', async () => {
+  const { MsgExec } = await import('cosmjs-types/cosmos/authz/v1beta1/tx.js');
+  const exec = (msgs) => MsgExec.encode(MsgExec.fromPartial({ grantee: 'qor1grantee', msgs })).finish();
+  const send = { typeUrl: '/cosmos.bank.v1beta1.MsgSend', value: new Uint8Array([1, 2, 3]) };
+  const req = validateQorexRequest({ chainId: CHAIN, messages: [{ typeUrl: '/cosmos.authz.v1beta1.MsgExec', value: exec([send]) }] });
+  assert.equal(req.messages[0].typeUrl, '/cosmos.authz.v1beta1.MsgExec');
+  for (const inner of ['/qorechain.pqc.v1.MsgRegisterPQCKeyV2', '/qorechain.pqc.v1.MsgRotatePQCKey']) {
+    assert.throws(
+      () => validateQorexRequest({ chainId: CHAIN, messages: [{ typeUrl: '/cosmos.authz.v1beta1.MsgExec', value: exec([{ typeUrl: inner, value: new Uint8Array() }]) }] }),
+      /PQC key management is refused inside authz/,
+    );
+  }
+  // Nested: an exec inside an exec carrying key management, sent as base64.
+  const nested = exec([{ typeUrl: '/cosmos.authz.v1beta1.MsgExec', value: exec([{ typeUrl: '/qorechain.pqc.v1.MsgMigratePQCKey', value: new Uint8Array() }]) }]);
   assert.throws(
-    () => validateQorexRequest({
-      chainId: CHAIN,
-      messages: [{ typeUrl: '/cosmos.authz.v1beta1.MsgExec', value: new Uint8Array() }],
-    }),
-    /refused by the wallet/,
+    () => validateQorexRequest({ chainId: CHAIN, messages: [{ typeUrl: '/cosmos.authz.v1beta1.MsgExec', value: Buffer.from(nested).toString('base64') }] }),
+    /msgs\[0\].*refused inside authz/,
+  );
+  assert.throws(
+    () => validateQorexRequest({ chainId: CHAIN, messages: [{ typeUrl: '/cosmos.authz.v1beta1.MsgExec', value: new Uint8Array([0xff, 0xff, 0xff]) }] }),
+    /could not be decoded/,
   );
 });
 
