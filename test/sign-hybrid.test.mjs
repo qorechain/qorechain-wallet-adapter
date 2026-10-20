@@ -1,10 +1,9 @@
-// Regression for the hedged-signing bug (pqc <0.1.1 / adapter <=0.1.1):
-// QoreChain's PQC ante verifier accepts only DETERMINISTIC ML-DSA-87 signatures
-// (FIPS-204 §3.4). The adapter's signHybrid used @qorechain/pqc's mldsa.sign,
-// which was hedged/randomized — every tx it produced was rejected by the chain.
-// These tests pin signHybrid's embedded PQC signature to the deterministic
-// output the chain verifier recomputes (independently derived via @noble with
-// extraEntropy:false, the mode validated against the shared /vectors).
+// signHybrid signs DETERMINISTICALLY by default (FIPS-204 §3.4, since
+// @qorechain/pqc 0.1.1), so its output is reproducible. The chain verifies
+// any valid ML-DSA-87 signature, hedged or deterministic; determinism is what
+// lets these tests pin signHybrid's embedded PQC signature byte-for-byte
+// (independently derived via @noble with extraEntropy:false, the mode
+// validated against the shared /vectors).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { QoreChainSigner, hybridSignBytes } from '../src/index.js';
@@ -41,7 +40,7 @@ function makeSigner() {
 const TX = {
   messages: [{ typeUrl: '/cosmos.bank.v1beta1.MsgSend', value: new Uint8Array([1, 2, 3]) }],
   fee: { amount: [{ denom: 'uqor', amount: '25000' }], gasLimit: 250000n },
-  memo: 'hedged-regression',
+  memo: 'deterministic-default',
   sequence: 3,
 };
 
@@ -61,7 +60,7 @@ function extractPqcSig(txRawBytes) {
   return { sig, body, authInfoBytes };
 }
 
-test('signHybrid embeds the DETERMINISTIC ML-DSA-87 signature the chain verifier expects', async () => {
+test('signHybrid embeds the DETERMINISTIC ML-DSA-87 signature (reproducible default)', async () => {
   const signer = makeSigner();
   const txRaw = await signer.signHybrid(TX);
   const { sig, body, authInfoBytes } = extractPqcSig(txRaw);
@@ -71,10 +70,10 @@ test('signHybrid embeds the DETERMINISTIC ML-DSA-87 signature the chain verifier
     messages: TX.messages, memo: TX.memo, timeoutHeight: 0n,
   })).finish();
   // Independent expectation: @noble deterministic mode (extraEntropy:false) —
-  // byte-identical to the chain's Rust FFI, per the shared /vectors.
+  // byte-identical across every binding, per the shared /vectors.
   const expected = ml_dsa87.sign(hybridSignBytes('v2', signer.chainId, b0, authInfoBytes), signer.pqc.secretKey, { extraEntropy: false });
   assert.equal(hx(sig), hx(expected),
-    'signHybrid must produce the deterministic signature (hedged signing is rejected by the chain)');
+    'signHybrid must produce the deterministic signature (the default signing mode)');
   assert.equal(txRaw.signBytesVersion, 'v2');
   assert.equal(body.memo, TX.memo);
   assert.deepEqual([...AuthInfo.decode(authInfoBytes).fee.amount[0].amount], [...'25000']);
