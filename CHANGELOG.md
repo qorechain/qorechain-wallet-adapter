@@ -1,9 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] — 2026-10-20
 
-Client support for chain v3.2.3. To be released after the network release is
-tagged.
+Client support for chain v3.2.3 (applied on mainnet at height 3,662,051).
 
 ### Added
 
