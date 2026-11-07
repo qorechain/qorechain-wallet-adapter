@@ -37,6 +37,7 @@ import {
 export {
   generatePqcRecoveryCode, pqcKeyFromRecoveryCode, isValidRecoveryCode,
   normalizeRecoveryCode, PQC_RECOVERY_CODE_PREFIX,
+  pqcKeyFromSecret, pqcRecoveryCodeFromSecret,
 } from './recovery.js';
 export { encodePqcHybridSignature, HYBRID_SIG_TYPE_URL, ALGORITHM_ML_DSA_87 };
 // Per-network hybrid sign-bytes (v1 legacy / v2) + resolver + rejection detector.

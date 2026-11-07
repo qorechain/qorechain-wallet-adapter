@@ -141,9 +141,35 @@ export async function generatePqcRecoveryCode() {
     throw new Error('generatePqcRecoveryCode needs a cryptographically secure random source (globalThis.crypto)');
   }
   const secret = cryptoApi.getRandomValues(new Uint8Array(SECRET_BYTES));
-  const code = formatCode(encodeBase32(concat(secret, checksum(secret))));
+  const code = encodeSecret(secret);
   secret.fill(0);
   return code;
+}
+
+function encodeSecret(secret) {
+  const payload = concat(secret, checksum(secret));
+  const code = formatCode(encodeBase32(payload));
+  payload.fill(0);
+  return code;
+}
+
+function requireSecret(secret, name) {
+  if (!(secret instanceof Uint8Array) || secret.length !== SECRET_BYTES) {
+    throw new Error(`${name}: secret must be ${SECRET_BYTES} bytes (Uint8Array)`);
+  }
+}
+
+/**
+ * Encode 32 bytes of secret entropy as a QRC1-… recovery code, for apps that
+ * already hold the secret and want to show it to the user in this format.
+ * The caller's buffer is not modified.
+ *
+ * @param {Uint8Array} secret  32 bytes from a CSPRNG
+ * @returns {string} the QRC1-… recovery code
+ */
+export function pqcRecoveryCodeFromSecret(secret) {
+  requireSecret(secret, 'pqcRecoveryCodeFromSecret');
+  return encodeSecret(secret);
 }
 
 /** True when `code` is a well-formed recovery code with a valid checksum. */
@@ -170,13 +196,42 @@ export function isValidRecoveryCode(code) {
  *         a key from a mistyped code
  */
 export async function pqcKeyFromRecoveryCode(code, address) {
-  if (typeof address !== 'string' || !/^qor1[02-9ac-hj-np-z]{38,}$/.test(address.toLowerCase())) {
-    throw new Error('pqcKeyFromRecoveryCode: address must be the account\'s qor1… address');
-  }
+  const addr = requireAddress(address, 'pqcKeyFromRecoveryCode');
   const secret = decodeRecoveryCode(code);
-  const seedInput = concat(utf8(`${KEY_DOMAIN}|${address.toLowerCase()}|`), secret);
+  try {
+    return deriveKey(secret, addr);
+  } finally {
+    secret.fill(0);
+  }
+}
+
+/**
+ * Derive the account's ML-DSA-87 keypair from 32 raw bytes of secret entropy.
+ *
+ * The same derivation as `pqcKeyFromRecoveryCode`: a code and the secret it
+ * encodes (`pqcRecoveryCodeFromSecret`) give the same key. The caller's buffer
+ * is not modified.
+ *
+ * @param {Uint8Array} secret   32 bytes of independent secret entropy
+ * @param {string}     address  the account's canonical qor1… address
+ * @returns {Promise<{ publicKey: Uint8Array, secretKey: Uint8Array }>}
+ */
+export async function pqcKeyFromSecret(secret, address) {
+  const addr = requireAddress(address, 'pqcKeyFromSecret');
+  requireSecret(secret, 'pqcKeyFromSecret');
+  return deriveKey(secret, addr);
+}
+
+function requireAddress(address, name) {
+  if (typeof address !== 'string' || !/^qor1[02-9ac-hj-np-z]{38,}$/.test(address.toLowerCase())) {
+    throw new Error(`${name}: address must be the account's qor1… address`);
+  }
+  return address.toLowerCase();
+}
+
+function deriveKey(secret, address) {
+  const seedInput = concat(utf8(`${KEY_DOMAIN}|${address}|`), secret);
   const seed = shake256(seedInput, 32);
-  secret.fill(0);
   seedInput.fill(0);
   const keypair = mldsa.keygen(seed);
   seed.fill(0);

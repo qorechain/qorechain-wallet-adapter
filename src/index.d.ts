@@ -17,7 +17,18 @@ export interface QoreWallet extends QoreAddresses {
 }
 export function generateQoreWallet(strength?: number): Promise<QoreWallet>;
 export function walletFromMnemonic(mnemonic: string): Promise<QoreWallet>;
-export function walletFromSeed(seed: Uint8Array | string): Promise<QoreWallet>;
+/**
+ * Where the seed-path wallet gets its ML-DSA-87 key. Pass exactly one: a
+ * recovery code, 32 raw bytes of independent secret entropy, or the pre-0.5.0
+ * derivation (only to recover an older account's key so it can be rotated with
+ * MsgRotatePQCKey; never for new accounts).
+ */
+export type WalletFromSeedOptions =
+  | { recoveryCode: string; pqcSecret?: never; legacySeedDerivation?: false }
+  | { pqcSecret: Uint8Array; recoveryCode?: never; legacySeedDerivation?: false }
+  | { legacySeedDerivation: true; recoveryCode?: never; pqcSecret?: never };
+/** The unified wallet for a 32-byte seed; throws unless exactly one PQC option is given. */
+export function walletFromSeed(seed: Uint8Array | string, opts: WalletFromSeedOptions): Promise<QoreWallet>;
 export function addressesFrom20(addr20: Uint8Array): QoreAddresses;
 export function qoreAddresses(opts: { cosmos?: string; evm?: string; hex?: string }): QoreAddresses;
 
@@ -274,6 +285,13 @@ export function pqcKeyFromRecoveryCode(
   code: string,
   address: string,
 ): Promise<{ publicKey: Uint8Array; secretKey: Uint8Array }>;
+/** The same ML-DSA-87 keypair as pqcKeyFromRecoveryCode, from the 32 raw secret bytes a code encodes. */
+export function pqcKeyFromSecret(
+  secret: Uint8Array,
+  address: string,
+): Promise<{ publicKey: Uint8Array; secretKey: Uint8Array }>;
+/** Encode 32 bytes of secret entropy as a QRC1-… recovery code. */
+export function pqcRecoveryCodeFromSecret(secret: Uint8Array): string;
 /** True for a well-formed code whose checksum matches. */
 export function isValidRecoveryCode(code: string): boolean;
 /** The 56 data characters of a code as typed; throws a UI-ready message when malformed. */

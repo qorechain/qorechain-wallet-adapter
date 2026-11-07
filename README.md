@@ -219,6 +219,9 @@ const { publicKey, secretKey } = await pqcKeyFromRecoveryCode(code, account.addr
   validate as the user types.
 - **Bound to the account address**, so one code cannot stand in for another
   account. An upper-case address is the same account.
+- **Already hold 32 random bytes?** `pqcRecoveryCodeFromSecret(secret32)` shows
+  them as a code, and `pqcKeyFromSecret(secret32, address)` derives the same key
+  as `pqcKeyFromRecoveryCode` would from that code.
 
 ### Rotating off a key minted from a wallet signature
 
@@ -279,7 +282,7 @@ await fetch(`${rpc}`, { method:'POST', body: JSON.stringify({
 ## API
 
 Wallet generation & unified addresses:
-- `generateQoreWallet(strength?)` / `walletFromMnemonic(mnemonic)` / `walletFromSeed(seed32)` — a unified wallet `{ mnemonic, privateKey, pubkey, cosmos, evm, svm, pqc }`.
+- `generateQoreWallet(strength?)` / `walletFromMnemonic(mnemonic)` / `walletFromSeed(seed32, { recoveryCode } | { pqcSecret } | { legacySeedDerivation: true })` — a unified wallet `{ mnemonic, privateKey, pubkey, cosmos, evm, svm, pqc }`.
 - `addressesFrom20(bytes20)` / `qoreAddresses({cosmos|evm|hex})` — the three encodings of a known account.
 
 eth-native Cosmos signing (chain ≥ v3.1.83):
@@ -338,9 +341,31 @@ encodings from a known account (for explorers / backends).
 
 ### Derive from a seed (non-mnemonic flows)
 
-`walletFromSeed(seed32)` builds the same unified wallet from any 32 bytes. **The
+`walletFromSeed(seed32, opts)` builds the same unified wallet from any 32 bytes. **The
 seed becomes the secp256k1 private key**, so it must come from something secret
 and stay secret: a CSPRNG, or a KDF over material only the user holds.
+
+Since 0.5.0 the ML-DSA-87 key needs a second secret that the seed says nothing
+about, so the classical key alone cannot produce the PQC half of the signature.
+Pass exactly one of:
+
+```js
+import { walletFromSeed, generatePqcRecoveryCode } from '@qorechain/wallet-adapter';
+
+const recoveryCode = await generatePqcRecoveryCode(); // show once, store apart from the seed
+const w = await walletFromSeed(seed32, { recoveryCode });
+
+// or 32 independent random bytes (the same key as the code that encodes them):
+const w2 = await walletFromSeed(seed32, { pqcSecret });
+
+// or, only to recover the PQC key of an account created before 0.5.0 so you can
+// rotate it (MsgRotatePQCKey) to a key from a recovery code; never for new accounts:
+const old = await walletFromSeed(seed32, { legacySeedDerivation: true });
+```
+
+With no option, or more than one, it throws. `pqcSecret` must not be the seed
+itself. The one-argument form of earlier versions is gone on purpose: it derived
+the PQC key from the seed alone.
 
 > **Do not derive the seed from a wallet signature.** Versions of this README up
 > to 0.1.7 showed a Phantom "connect → three addresses" recipe built on

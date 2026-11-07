@@ -347,7 +347,7 @@ test('retry: explicit version -> no retry; code 21 from another codespace -> no 
 // ---- eth-native hybrid signer ----
 
 test('signHybridEth: explicit form used and reported; legacy chain with no version/rest throws', async () => {
-  const w = await walletFromSeed(new Uint8Array(32).fill(7));
+  const w = await walletFromSeed(new Uint8Array(32).fill(7), { pqcSecret: new Uint8Array(32).fill(9) });
   const key = { privateKey: w.privateKey, pubkey: w.pubkey, pqc: w.pqc };
   const args = { key, chainId: 'qorechain-vladi', accountNumber: 1, ...TX };
   await assert.rejects(signHybridEth(args), /rest/);

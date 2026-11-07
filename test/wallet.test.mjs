@@ -1,7 +1,11 @@
 import { test } from 'node:test';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { fromBech32, fromHex, toHex } from '@cosmjs/encoding';
-import { generateQoreWallet, walletFromMnemonic, walletFromSeed, addressesFrom20, qoreAddresses, base58Decode } from '../src/index.js';
+import {
+  generateQoreWallet, walletFromMnemonic, walletFromSeed, addressesFrom20, qoreAddresses, base58Decode,
+  pqcKeyFromRecoveryCode, pqcKeyFromSecret, pqcRecoveryCodeFromSecret,
+} from '../src/index.js';
 
 // The three encodings must all resolve to the SAME 20-byte account.
 function assertSame20(w) {
@@ -53,10 +57,10 @@ test('addressesFrom20 matches a known 20-byte account (the 0x57b6… recipient)'
   assert.equal(addr.evm.toLowerCase(), '0x57b6f9c9c1b4e2646b15a421679e601c34f8b37c');
 });
 
-test('walletFromSeed: deterministic, unified 3-address, ML-DSA-87 key (Phantom P1a flow)', async () => {
-  const seed = fromHex('11'.repeat(32)); // any 32 bytes, e.g. shake256(phantomSignature)
-  const w1 = await walletFromSeed(seed);
-  const w2 = await walletFromSeed('0x' + '11'.repeat(32)); // hex form must match bytes form
+test('walletFromSeed: deterministic, unified 3-address, ML-DSA-87 key', async () => {
+  const seed = fromHex('11'.repeat(32));
+  const w1 = await walletFromSeed(seed, { legacySeedDerivation: true });
+  const w2 = await walletFromSeed('0x' + '11'.repeat(32), { legacySeedDerivation: true }); // hex form must match bytes form
   assert.equal(w1.cosmos, w2.cosmos);
   assert.equal(w1.evm, w2.evm);
   assert.equal(w1.svm, w2.svm);
@@ -66,6 +70,77 @@ test('walletFromSeed: deterministic, unified 3-address, ML-DSA-87 key (Phantom P
   assert.equal(w1.pqc.publicKey.length, 2592);
   assert.equal(w1.mnemonic, null);
   // a different seed yields a different account
-  const w3 = await walletFromSeed(fromHex('22'.repeat(32)));
+  const w3 = await walletFromSeed(fromHex('22'.repeat(32)), { legacySeedDerivation: true });
   assert.notEqual(w3.cosmos, w1.cosmos);
+});
+
+// ---- seed path: the PQC key needs a second secret ----
+
+const SEED01 = new Uint8Array(32).fill(0x01);
+const SEED01_ADDR = 'qor1rfjz7r3u8t65teavh5utquj3kwvsj983hh5zaj';
+const CODE07 = 'QRC1-0W3G-E1R7-0W3G-E1R7-0W3G-E1R7-0W3G-E1R7-0W3G-E1R7-0W3G-E1R7-0W3X-19XK';
+const RECOVERY_PUB_SHA256 = 'cf50dca6c9a0d86eeac9d6a50ee54e567e2126184143be694b8df1f31c8e23ef';
+const LEGACY_PUB_SHA256 = '3710d198ff5d3206601e9dfd7e0e4bac0656de0fee28f5a20b39e05c81e46bd0';
+const sha256hex = (b) => createHash('sha256').update(b).digest('hex');
+
+test('walletFromSeed known answers: recoveryCode and pqcSecret give the same key, legacy keeps the old one', async () => {
+  const byCode = await walletFromSeed(SEED01, { recoveryCode: CODE07 });
+  assert.equal(byCode.cosmos, SEED01_ADDR);
+  assert.equal(byCode.pqc.publicKey.length, 2592);
+  assert.equal(sha256hex(byCode.pqc.publicKey), RECOVERY_PUB_SHA256);
+  const secret = new Uint8Array(32).fill(0x07);
+  const bySecret = await walletFromSeed(SEED01, { pqcSecret: secret });
+  assert.equal(sha256hex(bySecret.pqc.publicKey), RECOVERY_PUB_SHA256);
+  assert.deepEqual(secret, new Uint8Array(32).fill(0x07), 'the caller\'s secret is left untouched');
+  const legacy = await walletFromSeed(SEED01, { legacySeedDerivation: true });
+  assert.equal(legacy.cosmos, SEED01_ADDR);
+  assert.equal(sha256hex(legacy.pqc.publicKey), LEGACY_PUB_SHA256);
+  // the classical half is the same whichever PQC option is used
+  assert.equal(byCode.privateKey, legacy.privateKey);
+  assert.equal(byCode.evm, legacy.evm);
+});
+
+test('walletFromSeed and the recovery helpers agree on the code format', async () => {
+  const secret = new Uint8Array(32).fill(0x07);
+  assert.equal(pqcRecoveryCodeFromSecret(secret), CODE07);
+  assert.equal(sha256hex((await pqcKeyFromSecret(secret, SEED01_ADDR)).publicKey), RECOVERY_PUB_SHA256);
+  assert.equal(sha256hex((await pqcKeyFromRecoveryCode(CODE07, SEED01_ADDR)).publicKey), RECOVERY_PUB_SHA256);
+  assert.throws(() => pqcRecoveryCodeFromSecret(new Uint8Array(31)), /32 bytes/);
+  await assert.rejects(pqcKeyFromSecret(new Uint8Array(31), SEED01_ADDR), /32 bytes/);
+  await assert.rejects(pqcKeyFromSecret(secret, '0x9858EfFD232B4033E47d90003D41EC34EcaEda94'), /qor1/);
+});
+
+test('walletFromSeed reads a code typed loosely, and refuses a mistyped one', async () => {
+  // lower case, spaces instead of dashes, O for 0, and the prefix written "qrcl"
+  const typed = 'qrcl ' + CODE07.slice(5).toLowerCase().replace(/-/g, ' ').replace(/0/g, 'o');
+  const w = await walletFromSeed(SEED01, { recoveryCode: typed });
+  assert.equal(sha256hex(w.pqc.publicKey), RECOVERY_PUB_SHA256);
+  const withI = CODE07.replace(/1/g, 'I');
+  assert.equal(sha256hex((await walletFromSeed(SEED01, { recoveryCode: withI })).pqc.publicKey), RECOVERY_PUB_SHA256);
+  const typo = CODE07.slice(0, -1) + (CODE07.endsWith('K') ? 'M' : 'K');
+  await assert.rejects(walletFromSeed(SEED01, { recoveryCode: typo }), /checksum does not match/);
+});
+
+test('walletFromSeed with no PQC option throws and names the three choices', async () => {
+  for (const opts of [undefined, {}, { legacySeedDerivation: false }]) {
+    await assert.rejects(walletFromSeed(SEED01, opts), (e) =>
+      /recoveryCode/.test(e.message) && /pqcSecret/.test(e.message) && /legacySeedDerivation/.test(e.message));
+  }
+});
+
+test('walletFromSeed with more than one PQC option throws', async () => {
+  const secret = new Uint8Array(32).fill(0x07);
+  for (const opts of [
+    { recoveryCode: CODE07, pqcSecret: secret },
+    { recoveryCode: CODE07, legacySeedDerivation: true },
+    { pqcSecret: secret, legacySeedDerivation: true },
+    { recoveryCode: CODE07, pqcSecret: secret, legacySeedDerivation: true },
+  ]) {
+    await assert.rejects(walletFromSeed(SEED01, opts), /only one of/);
+  }
+});
+
+test('walletFromSeed refuses the seed itself as pqcSecret', async () => {
+  await assert.rejects(walletFromSeed(SEED01, { pqcSecret: SEED01.slice() }), /independent of the seed/);
+  await assert.rejects(walletFromSeed(SEED01, { pqcSecret: new Uint8Array(16) }), /32 bytes/);
 });

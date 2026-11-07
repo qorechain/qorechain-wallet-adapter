@@ -25,6 +25,7 @@ import { Bip39, Random, Slip10, Slip10Curve, stringToPath, Secp256k1, Keccak256,
 import { toBech32, toHex, fromHex, fromBech32 } from '@cosmjs/encoding';
 import { mldsa, shake256 } from '@qorechain/pqc';
 import { base58Encode } from './phantom.js';
+import { pqcKeyFromRecoveryCode, pqcKeyFromSecret } from './recovery.js';
 
 // Ethereum HD path (coin-type 60) — makes the 20-byte address the keccak
 // derivation, so the key is EVM-native (spendable via eth_sendRawTransaction).
@@ -111,27 +112,70 @@ export async function walletFromMnemonic(mnemonic) {
  * `walletFromMnemonic`: qor1 / 0x / svm all resolve to the same account and the
  * same balance, and the key signs on every interface (incl. hybrid PQC).
  *
- * The ML-DSA-87 key is bound to `qorechain:pqc:v1|<qor1>|seed:<hex>` so it is
- * recoverable from the same seed and never collides with a mnemonic wallet.
+ * The ML-DSA-87 key needs a SECOND secret that the seed says nothing about, so
+ * holding the classical key alone is not enough to sign the PQC half. Pass
+ * exactly one of:
+ *
+ *   - `recoveryCode`: a QRC1-… recovery code (`generatePqcRecoveryCode`); the
+ *     key is `pqcKeyFromRecoveryCode(recoveryCode, cosmos)`;
+ *   - `pqcSecret`: 32 raw bytes of independent secret entropy; the same
+ *     derivation, so the secret and its code (`pqcRecoveryCodeFromSecret`) give
+ *     the same key;
+ *   - `legacySeedDerivation: true`: the derivation used before 0.5.0, bound to
+ *     `qorechain:pqc:v1|<qor1>|seed:<hex>`. Use it only to recover the PQC key
+ *     of an account created before 0.5.0, so you can rotate it
+ *     (MsgRotatePQCKey) to a key from a recovery code; never for new accounts.
+ *
  * `seed` accepts a 32-byte Uint8Array or a (0x-)hex string.
+ *
+ * @param {Uint8Array|string} seed
+ * @param {{ recoveryCode?: string, pqcSecret?: Uint8Array, legacySeedDerivation?: boolean }} opts
+ * @throws when no option, or more than one, is given
  */
-export async function walletFromSeed(seed) {
+export async function walletFromSeed(seed, opts = {}) {
+  const { recoveryCode, pqcSecret, legacySeedDerivation } = opts ?? {};
+  const chosen = [recoveryCode !== undefined, pqcSecret !== undefined, legacySeedDerivation === true]
+    .filter(Boolean).length;
+  if (chosen === 0) {
+    throw new Error(
+      'walletFromSeed needs a second secret for the PQC key: pass { recoveryCode } (a QRC1-… code from ' +
+      'generatePqcRecoveryCode), { pqcSecret } (32 independent random bytes), or ' +
+      '{ legacySeedDerivation: true } (only to recover the key of an account created before 0.5.0 so it ' +
+      'can be rotated; never for new accounts)',
+    );
+  }
+  if (chosen > 1) {
+    throw new Error('walletFromSeed: pass only one of recoveryCode, pqcSecret or legacySeedDerivation');
+  }
   const privkey = typeof seed === 'string' ? fromHex(seed.replace(/^0x/, '')) : seed;
   if (!(privkey instanceof Uint8Array) || privkey.length !== 32) {
     throw new Error('seed must be 32 bytes (Uint8Array or hex)');
+  }
+  if (pqcSecret instanceof Uint8Array && pqcSecret.length === privkey.length
+      && pqcSecret.every((b, i) => b === privkey[i])) {
+    throw new Error('walletFromSeed: pqcSecret must be independent of the seed, not the seed itself');
   }
   const kp = await Secp256k1.makeKeypair(privkey); // validates the scalar is in [1, n-1]
   const uncompressed = kp.pubkey;
   const compressed = Secp256k1.compressPubkey(uncompressed);
   const addr20 = new Keccak256(uncompressed.slice(1)).digest().slice(12);
   const enc = addressesFrom20(addr20);
-  const pqcSeed = shake256(new TextEncoder().encode(`qorechain:pqc:v1|${enc.cosmos}|seed:${toHex(privkey)}`), 32);
+  let pqc;
+  if (recoveryCode !== undefined) {
+    pqc = await pqcKeyFromRecoveryCode(recoveryCode, enc.cosmos);
+  } else if (pqcSecret !== undefined) {
+    pqc = await pqcKeyFromSecret(pqcSecret, enc.cosmos);
+  } else {
+    const pqcSeed = shake256(new TextEncoder().encode(`qorechain:pqc:v1|${enc.cosmos}|seed:${toHex(privkey)}`), 32);
+    pqc = mldsa.keygen(pqcSeed);
+    pqcSeed.fill(0);
+  }
   return {
     mnemonic: null,
     privateKey: '0x' + toHex(privkey),
     pubkey: '0x' + toHex(compressed),
     ...enc,
-    pqc: mldsa.keygen(pqcSeed),
+    pqc,
   };
 }
 
