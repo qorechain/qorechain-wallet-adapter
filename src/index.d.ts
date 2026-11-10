@@ -64,8 +64,16 @@ export function base58Decode(str: string, size?: number): Uint8Array;
 export function systemTransferData(lamports: number | bigint): Uint8Array;
 export interface SvmAccountMeta { pubkey: string; isSigner: boolean; isWritable: boolean; }
 export function authSignBytes(p: { programId: string; accounts: SvmAccountMeta[]; data: Uint8Array; recentBlockhashHex: string }): Promise<Uint8Array>;
-export function buildPhantomSvmEnvelope(p: { wallet: any; programId?: string; accounts: SvmAccountMeta[]; data: Uint8Array; recentBlockhashHex: string }): Promise<any>;
-export function buildPhantomTransfer(p: { wallet: any; fromSvmAddr: string; toSvmAddr: string; lamports: number | bigint; recentBlockhashHex: string }): Promise<any>;
+export function authSignBytesV3(p: { chainId: string; programId: string; accounts: SvmAccountMeta[]; data: Uint8Array; recentBlockhashHex: string }): Promise<Uint8Array>;
+/** The protocol feature that switches a network to v3 (chain-bound) SVM authorisation bytes. */
+export const SVM_AUTH_CHAIN_BOUND_FEATURE: 'svm-relayed-chain-bound';
+export type SvmAuthVersion = 'v2' | 'v3';
+/** 'v3' when the network enables svm-relayed-chain-bound, 'v2' when it does not; throws when the feature list cannot be read. */
+export function resolveSvmAuthVersion(p?: { rest?: string; svmAuthVersion?: SvmAuthVersion | 'auto'; fetch?: typeof fetch }): Promise<SvmAuthVersion>;
+/** Signing options for the SVM envelope builders: `rest` is read when svmAuthVersion is 'auto' (the default); `chainId` is required for v3. */
+export interface SvmAuthOptions { chainId?: string; rest?: string; svmAuthVersion?: SvmAuthVersion | 'auto'; fetch?: typeof fetch; }
+export function buildPhantomSvmEnvelope(p: { wallet: any; programId?: string; accounts: SvmAccountMeta[]; data: Uint8Array; recentBlockhashHex: string } & SvmAuthOptions): Promise<any>;
+export function buildPhantomTransfer(p: { wallet: any; fromSvmAddr: string; toSvmAddr: string; lamports: number | bigint; recentBlockhashHex: string } & SvmAuthOptions): Promise<any>;
 export function registerAuthenticatorMsg(p: { owner: string; phantomPubkey: Uint8Array; permissions?: string[]; expiryUnix: number | bigint; label?: string }): { typeUrl: string; value: any };
 // --- Per-network hybrid PQC sign-bytes (v1 legacy / v2, chain v3.2.0 / testnet v3.1.98) ---
 export type SignBytesVersion = 'v1' | 'v2';

@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `authSignBytesV3`: the chain-bound SVM authorisation digest (domain
+  `qorechain-svm-auth-v3`, chain id length-framed) that a network verifies once
+  it enables the protocol feature `svm-relayed-chain-bound`.
+- `resolveSvmAuthVersion({ rest })` reads the network's protocol features and
+  returns `'v3'` or `'v2'`; it throws when the list cannot be read.
+
+### Changed (breaking)
+
+- `buildPhantomSvmEnvelope` / `buildPhantomTransfer` now choose the form to
+  sign: pass `rest` and `chainId`, or `svmAuthVersion: 'v2' | 'v3'`. Without
+  either they throw instead of signing a form the network may refuse.
+
 ## [0.5.0] - 2026-11-10
 
 ### Changed (breaking)

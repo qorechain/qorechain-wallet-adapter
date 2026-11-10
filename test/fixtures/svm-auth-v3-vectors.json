@@ -1,0 +1,104 @@
+{
+  "cases": [
+    {
+      "name": "system-transfer-diana",
+      "chain_id": "qorechain-diana",
+      "program_id_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "accounts": [
+        {
+          "address_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+          "is_signer": true,
+          "is_writable": true
+        },
+        {
+          "address_hex": "0202020202020202020202020202020202020202020202020202020202020202",
+          "is_signer": false,
+          "is_writable": true
+        }
+      ],
+      "data_hex": "0200000040420f0000000000",
+      "recent_blockhash_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "v2_digest_hex": "e9bd91648e66fd043656b012a9932a0284341d7dcb10af58bc74adb768a7c449",
+      "v3_digest_hex": "819a3794c8c8f8c78927c1bd766695899a1a8f570c725430d1af7ac9e7a70202"
+    },
+    {
+      "name": "system-transfer-vladi",
+      "chain_id": "qorechain-vladi",
+      "program_id_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "accounts": [
+        {
+          "address_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+          "is_signer": true,
+          "is_writable": true
+        },
+        {
+          "address_hex": "0202020202020202020202020202020202020202020202020202020202020202",
+          "is_signer": false,
+          "is_writable": true
+        }
+      ],
+      "data_hex": "0200000040420f0000000000",
+      "recent_blockhash_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "v2_digest_hex": "e9bd91648e66fd043656b012a9932a0284341d7dcb10af58bc74adb768a7c449",
+      "v3_digest_hex": "0e1abea5be23ed1b0ef6df9820af563add0786c2a941d1f4d768e908c08bc7aa"
+    },
+    {
+      "name": "no-accounts-no-data",
+      "chain_id": "qorechain-diana",
+      "program_id_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "accounts": [],
+      "data_hex": "",
+      "recent_blockhash_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+      "v2_digest_hex": "f91e14371afdd4b6bf597f857992087aa24fc8ed0a670cec99eff9c9c9b5f4a8",
+      "v3_digest_hex": "a2b115ff280273239f97cd126c7b14712c1727fc07000b03c1bca6dc839ea187"
+    },
+    {
+      "name": "flags-all-combinations",
+      "chain_id": "qorechain-vladi",
+      "program_id_hex": "abababababababababababababababababababababababababababababababab",
+      "accounts": [
+        {
+          "address_hex": "0303030303030303030303030303030303030303030303030303030303030303",
+          "is_signer": false,
+          "is_writable": false
+        },
+        {
+          "address_hex": "0404040404040404040404040404040404040404040404040404040404040404",
+          "is_signer": true,
+          "is_writable": false
+        },
+        {
+          "address_hex": "0505050505050505050505050505050505050505050505050505050505050505",
+          "is_signer": false,
+          "is_writable": true
+        },
+        {
+          "address_hex": "0606060606060606060606060606060606060606060606060606060606060606",
+          "is_signer": true,
+          "is_writable": true
+        }
+      ],
+      "data_hex": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f5051525354555657",
+      "recent_blockhash_hex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+      "v2_digest_hex": "7ed23e22109a2f417423ccb511bdcb255b924c3982d53b58fed3e307464c33e5",
+      "v3_digest_hex": "574d9ad5af50ee58131f8844ad885096c05a9457643dfbadfec1c4d92a2a0fdf"
+    },
+    {
+      "name": "other-chain-id",
+      "chain_id": "my-rollup-1",
+      "program_id_hex": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "accounts": [
+        {
+          "address_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+          "is_signer": true,
+          "is_writable": true
+        }
+      ],
+      "data_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b",
+      "recent_blockhash_hex": "e0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+      "v2_digest_hex": "4f5ef28d60c611cd75af95c3d464158ab4b5ca40e07c16afa6cd049ba06ca9a6",
+      "v3_digest_hex": "7090132b52daebe77cbda01308e801df06b8c4c7b53e861fa15298073be636e7"
+    }
+  ],
+  "description": "SVM linked-key authorisation digests, v2 and v3 (chain-bound), generated from x/svm/types SVMAuthSignBytes / SVMAuthSignBytesV3"
+}

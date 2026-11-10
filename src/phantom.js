@@ -14,7 +14,9 @@
 //
 // NOTE: the SVM lane is currently closed on both mainnet and testnet (and the
 // authenticator module is disabled), so nothing signed here is accepted yet. When
-// the lane reopens it verifies only the v2 digest ("qorechain-svm-auth-v2") built below.
+// the lane reopens it verifies the v2 digest ("qorechain-svm-auth-v2"), or the
+// chain-bound v3 digest once the network enables "svm-relayed-chain-bound";
+// buildPhantomSvmEnvelope reads the feature list and signs the form in force.
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const B58MAP = (() => { const m = {}; for (let i = 0; i < B58.length; i++) m[B58[i]] = i; return m; })();
@@ -86,6 +88,67 @@ export function systemTransferData(lamports) {
  * qorechain-core/x/svm/types/auth_sign.go.
  */
 export async function authSignBytes({ programId, accounts, data, recentBlockhashHex }) {
+  return svmAuthDigest('qorechain-svm-auth-v2', null, { programId, accounts, data, recentBlockhashHex });
+}
+
+/**
+ * authSignBytesV3 is authSignBytes with the chain id bound in. A network that
+ * enables the protocol feature "svm-relayed-chain-bound" verifies only this form:
+ *   sha256( "qorechain-svm-auth-v3" ‖ BE64(len chainId) ‖ chainId ‖ programId(32) ‖
+ *           BE64(accounts.length) ‖ Σ[ addr(32) ‖ flags(1) ] ‖
+ *           BE64(data.length) ‖ data ‖
+ *           BE64(blockhash.length) ‖ blockhash )
+ * A signature made for one chain is then never valid on another. Keep in
+ * lockstep with SVMAuthSignBytesV3 in x/svm/types/auth_sign.go.
+ */
+export async function authSignBytesV3({ chainId, programId, accounts, data, recentBlockhashHex }) {
+  if (typeof chainId !== 'string' || chainId.length === 0) {
+    throw new Error('authSignBytesV3: chainId is required (v3 binds the chain id)');
+  }
+  return svmAuthDigest('qorechain-svm-auth-v3', chainId, { programId, accounts, data, recentBlockhashHex });
+}
+
+/** The protocol feature that switches a network to v3 SVM authorisation bytes. */
+export const SVM_AUTH_CHAIN_BOUND_FEATURE = 'svm-relayed-chain-bound';
+
+/**
+ * The SVM authorisation form a network verifies: 'v3' when its protocol feature
+ * list (GET {rest}/qorechain/pqc/v1/protocol_features) has
+ * "svm-relayed-chain-bound" enabled, 'v2' when the list is readable and the
+ * feature is absent or disabled. Throws when the list cannot be read: it never
+ * guesses, because a wrong guess is a signature the network refuses.
+ * `svmAuthVersion` 'v2' | 'v3' is returned as-is without a request.
+ */
+export async function resolveSvmAuthVersion({ rest, svmAuthVersion = 'auto', fetch = globalThis.fetch } = {}) {
+  const mode = svmAuthVersion ?? 'auto';
+  if (mode === 'v2' || mode === 'v3') return mode;
+  if (mode !== 'auto') throw new Error(`svmAuthVersion must be 'auto', 'v2' or 'v3', got ${JSON.stringify(svmAuthVersion)}`);
+  const hint = "pass `rest` (the network's LCD URL) or an explicit svmAuthVersion 'v2' | 'v3'";
+  if (!rest) throw new Error(`Cannot choose the SVM authorisation form without asking the network: ${hint}.`);
+  if (typeof fetch !== 'function') throw new Error(`No fetch implementation available; ${hint}.`);
+  const url = `${String(rest).replace(/\/+$/, '')}/qorechain/pqc/v1/protocol_features`;
+  let enabled = false;
+  try {
+    const res = await fetch(url, { headers: { accept: 'application/json' } });
+    if (!res || !res.ok) throw new Error(`HTTP ${res ? res.status : 'no response'}`);
+    const list = (await res.json())?.features;
+    if (!Array.isArray(list)) throw new Error('the answer has no feature list');
+    for (const f of list) {
+      if (typeof f !== 'object' || f === null || Array.isArray(f)) throw new Error('the answer has an invalid entry');
+      if (typeof f.name !== 'string' || f.name.trim() !== SVM_AUTH_CHAIN_BOUND_FEATURE) continue;
+      const on = f.enabled;
+      if (on === true || on === 'true') enabled = true;
+      else if (!(on === false || on === 'false' || on === undefined || on === null || on === '')) {
+        throw new Error(`${SVM_AUTH_CHAIN_BOUND_FEATURE} has an invalid enabled value`);
+      }
+    }
+  } catch (e) {
+    throw new Error(`Cannot read the protocol features from ${url} (${e && e.message ? e.message : e}); ${hint}.`);
+  }
+  return enabled ? 'v3' : 'v2';
+}
+
+async function svmAuthDigest(tag, chainId, { programId, accounts, data, recentBlockhashHex }) {
   const parts = [];
   const enc = new TextEncoder();
   // Big-endian uint64, matching the chain's other sign-bytes helpers.
@@ -95,7 +158,12 @@ export async function authSignBytes({ programId, accounts, data, recentBlockhash
     for (let i = 7; i >= 0; i--) { b[i] = Number(v & 0xffn); v >>= 8n; }
     return b;
   };
-  parts.push(enc.encode('qorechain-svm-auth-v2'));
+  parts.push(enc.encode(tag));
+  if (chainId !== null) {
+    const cid = enc.encode(chainId);
+    parts.push(be64(cid.length));
+    parts.push(cid);
+  }
   parts.push(base58Decode(programId));
   parts.push(be64(accounts.length));
   for (const a of accounts) {
@@ -129,10 +197,19 @@ function hexToBytes(hex) {
  * @param {Array<{pubkey:string,isSigner:boolean,isWritable:boolean}>} p.accounts
  * @param {Uint8Array} p.data           raw instruction data
  * @param {string} p.recentBlockhashHex value from getLatestBlockhash (.value.blockhash, hex)
+ * @param {string} [p.chainId]          the network's chain id; required for v3
+ * @param {string} [p.rest]             the network's LCD URL, read when svmAuthVersion is 'auto'
+ * @param {'auto'|'v2'|'v3'} [p.svmAuthVersion='auto'] which form to sign (see resolveSvmAuthVersion)
  * @returns {Promise<object>} the JSON envelope to POST to sendTransaction
  */
-export async function buildPhantomSvmEnvelope({ wallet, programId = SYSTEM_PROGRAM_ID, accounts, data, recentBlockhashHex }) {
-  const digest = await authSignBytes({ programId, accounts, data, recentBlockhashHex });
+export async function buildPhantomSvmEnvelope({
+  wallet, programId = SYSTEM_PROGRAM_ID, accounts, data, recentBlockhashHex,
+  chainId, rest, svmAuthVersion = 'auto', fetch,
+}) {
+  const version = await resolveSvmAuthVersion({ rest, svmAuthVersion, ...(fetch ? { fetch } : {}) });
+  const digest = version === 'v3'
+    ? await authSignBytesV3({ chainId, programId, accounts, data, recentBlockhashHex })
+    : await authSignBytes({ programId, accounts, data, recentBlockhashHex });
   const { signature } = await wallet.signMessage(digest);
   const pub = wallet.publicKey.toBytes ? wallet.publicKey.toBytes() : new Uint8Array(wallet.publicKey);
   return {
@@ -152,9 +229,11 @@ export async function buildPhantomSvmEnvelope({ wallet, programId = SYSTEM_PROGR
  * buildPhantomTransfer is a convenience wrapper: a native-QOR transfer from the
  * Phantom-controlled account to `toSvmAddr`, authorized by Phantom.
  */
-export async function buildPhantomTransfer({ wallet, fromSvmAddr, toSvmAddr, lamports, recentBlockhashHex }) {
+export async function buildPhantomTransfer({
+  wallet, fromSvmAddr, toSvmAddr, lamports, recentBlockhashHex, chainId, rest, svmAuthVersion, fetch,
+}) {
   return buildPhantomSvmEnvelope({
-    wallet,
+    wallet, chainId, rest, svmAuthVersion, fetch,
     programId: SYSTEM_PROGRAM_ID,
     accounts: [
       { pubkey: fromSvmAddr, isSigner: true, isWritable: true },

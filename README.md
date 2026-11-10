@@ -436,6 +436,11 @@ key once (`registerAuthenticatorMsg`, hybrid-signed); thereafter the external ke
 authorizes actions on three lanes:
 
 - **SVM** — `buildPhantomSvmEnvelope` / `buildPhantomTransfer` (post to `sendTransaction`).
+  Pass `rest` (the network's LCD URL) and `chainId`: the builder reads the
+  network's protocol features and signs the chain-bound form (`authSignBytesV3`)
+  when `svm-relayed-chain-bound` is enabled, the earlier form (`authSignBytes`)
+  otherwise. It throws when the feature list cannot be read; pass
+  `svmAuthVersion: 'v2' | 'v3'` to choose without a request.
 - **EVM** — `buildPhantomExecuteEvm` → `MsgExecuteEVM` (relayer broadcasts).
 - **Native** — `buildPhantomExecuteCosmos` → `MsgExecuteCosmos` (relayer broadcasts).
 

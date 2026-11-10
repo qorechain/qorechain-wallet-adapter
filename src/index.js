@@ -50,7 +50,8 @@ export {
 // Phantom / any-ed25519-wallet support: drive the one unified account from Phantom.
 export {
   base58Encode, base58Decode, SYSTEM_PROGRAM_ID, systemTransferData,
-  authSignBytes, buildPhantomSvmEnvelope, buildPhantomTransfer, registerAuthenticatorMsg,
+  authSignBytes, authSignBytesV3, resolveSvmAuthVersion, SVM_AUTH_CHAIN_BOUND_FEATURE,
+  buildPhantomSvmEnvelope, buildPhantomTransfer, registerAuthenticatorMsg,
 } from './phantom.js';
 // Unified wallet generation: one eth-native key → cosmos/evm/svm addresses + PQC key.
 export {
