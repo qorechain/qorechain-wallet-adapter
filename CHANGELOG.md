@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.5.0] - 2026-11-10
+
+### Changed (breaking)
+
+- `walletFromSeed(seed, opts)` now needs a second, independent secret for the
+  account's PQC key: `{ recoveryCode }` (a QRC1 recovery code) or
+  `{ pqcSecret }` (32 random bytes). `{ legacySeedDerivation: true }` keeps the
+  previous derivation, only to recover the PQC key of an account created before
+  0.5.0 so you can rotate it (`MsgRotatePQCKey`) to a key from a recovery code;
+  never use it for new accounts. A PQC secret equal to the seed is refused.
+  Mnemonic wallets are unchanged.
+- `validateQorexRequest` / `qorexSignAndBroadcast` refuse, directly and inside
+  authz `MsgExec`, the same messages QoreX keeps to its own screens:
+  `MsgRegisterKEMKey`, `MsgRemoveKEMKey`, `MsgRegisterPQCMultisig`,
+  `MsgRegisterAuthenticator`, `MsgRevokeAuthenticator`, `MsgUpdateSpendingRules`,
+  `MsgCreateAbstractAccount`, `MsgOpenEVMWindow`, `MsgCloseEVMWindow`,
+  `MsgAuthorizeEVMDelegation` and `MsgClearEVMDelegation`.
+
+### Added
+
+- `pqcKeyFromSecret` and `pqcRecoveryCodeFromSecret`.
+
+Security details will be published separately.
+
+### Migrating from 0.4
+
+```js
+// before
+const w = await walletFromSeed(seed);
+// after: keep a recovery code next to the seed
+const recoveryCode = await generatePqcRecoveryCode();
+const w = await walletFromSeed(seed, { recoveryCode });
+```
+
 ## [0.4.0] — 2026-10-20
 
 Client support for chain v3.2.3 (applied on mainnet at height 3,662,051).
