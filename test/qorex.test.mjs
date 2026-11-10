@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   getQorexNative, hasQorexSignAndBroadcast, connectQorex,
   validateQorexRequest, qorexSignAndBroadcast, isQorexRejection,
-  QOREX_MAX_MESSAGES, QOREX_MAX_MEMO_BYTES, QOREX_MIN_GAS_LIMIT, QOREX_MAX_GAS_LIMIT,
+  QOREX_MAX_MESSAGES, QOREX_MAX_MEMO_BYTES, QOREX_MIN_GAS_LIMIT, QOREX_MAX_GAS_LIMIT, QOREX_REFUSED_TYPE_URLS,
 } from '../src/index.js';
 
 const CHAIN = 'qorechain-vladi';
@@ -106,6 +106,35 @@ test('PQC key management is refused locally, with the reason', () => {
     assert.throws(
       () => validateQorexRequest({ chainId: CHAIN, messages: [{ typeUrl, value: new Uint8Array() }] }),
       /QoreX manages the account's post-quantum key itself/,
+      typeUrl,
+    );
+  }
+});
+
+const AUTHORITY = [
+  '/qorechain.abstractaccount.v1.MsgRegisterAuthenticator',
+  '/qorechain.abstractaccount.v1.MsgRevokeAuthenticator',
+  '/qorechain.abstractaccount.v1.MsgUpdateSpendingRules',
+  '/qorechain.abstractaccount.v1.MsgCreateAbstractAccount',
+  '/qorechain.pqc.v1.MsgOpenEVMWindow',
+  '/qorechain.pqc.v1.MsgCloseEVMWindow',
+  '/qorechain.pqc.v1.MsgAuthorizeEVMDelegation',
+  '/qorechain.pqc.v1.MsgClearEVMDelegation',
+];
+
+test('messages that change who may spend from the account are refused, directly and inside authz', async () => {
+  const { MsgExec } = await import('cosmjs-types/cosmos/authz/v1beta1/tx.js');
+  const exec = (msgs) => MsgExec.encode(MsgExec.fromPartial({ grantee: 'qor1grantee', msgs })).finish();
+  for (const typeUrl of AUTHORITY) {
+    assert.ok(QOREX_REFUSED_TYPE_URLS.includes(typeUrl), typeUrl);
+    assert.throws(
+      () => validateQorexRequest({ chainId: CHAIN, messages: [{ typeUrl, value: new Uint8Array() }] }),
+      /changes who may spend from the account/,
+      typeUrl,
+    );
+    assert.throws(
+      () => validateQorexRequest({ chainId: CHAIN, messages: [{ typeUrl: '/cosmos.authz.v1beta1.MsgExec', value: exec([{ typeUrl, value: new Uint8Array() }]) }] }),
+      /account authority is refused inside authz/,
       typeUrl,
     );
   }

@@ -176,6 +176,11 @@ Things worth knowing before you build a flow on it:
   `authz.MsgExec` wrapping any of them). The
   wallet owns the account's key. Registration happens on its own, on the
   account's first transaction.
+- **Account authority is refused** (`MsgRegisterAuthenticator`,
+  `MsgRevokeAuthenticator`, `MsgUpdateSpendingRules`, `MsgCreateAbstractAccount`,
+  `MsgOpenEVMWindow`, `MsgCloseEVMWindow`, `MsgAuthorizeEVMDelegation`,
+  `MsgClearEVMDelegation`, and `authz.MsgExec` wrapping any of them). These
+  change who may spend from the account, so the user manages them from QoreX.
 - **1–32 messages per call.** `connectQorex({ chainId })` on its own prompts the
   connection without sending anything; `qorexSignAndBroadcast` calls it for you.
 - `code` is the chain's delivery code — `0` means it landed. A user declining

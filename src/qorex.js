@@ -46,8 +46,10 @@ export const QOREX_MIN_GAS_LIMIT = 100_000;
 export const QOREX_MAX_GAS_LIMIT = 5_000_000;
 
 /**
- * PQC key-management messages the wallet refuses: it manages the account's key
- * itself, and a dApp that could rotate it could take the account.
+ * Messages the wallet refuses from a dApp, directly or inside authz MsgExec:
+ * PQC key management (the wallet manages the account's keys itself, and a dApp
+ * that could rotate them could take the account) and anything that grants
+ * standing authority over the account.
  */
 export const QOREX_REFUSED_TYPE_URLS = Object.freeze([
   '/qorechain.pqc.v1.MsgRegisterPQCKey',
@@ -60,7 +62,30 @@ export const QOREX_REFUSED_TYPE_URLS = Object.freeze([
   '/qorechain.pqc.v1.MsgRegisterKEMKey',
   '/qorechain.pqc.v1.MsgRemoveKEMKey',
   '/qorechain.pqc.v1.MsgRegisterPQCMultisig',
+  // Who may spend from the account, and how much. A dApp asking for these is
+  // asking for standing authority over the account, so only the wallet's own
+  // screens can send them.
+  '/qorechain.abstractaccount.v1.MsgRegisterAuthenticator',
+  '/qorechain.abstractaccount.v1.MsgRevokeAuthenticator',
+  '/qorechain.abstractaccount.v1.MsgUpdateSpendingRules',
+  '/qorechain.abstractaccount.v1.MsgCreateAbstractAccount',
+  '/qorechain.pqc.v1.MsgOpenEVMWindow',
+  '/qorechain.pqc.v1.MsgCloseEVMWindow',
+  '/qorechain.pqc.v1.MsgAuthorizeEVMDelegation',
+  '/qorechain.pqc.v1.MsgClearEVMDelegation',
 ]);
+
+const ACCOUNT_AUTHORITY_TYPE_URLS = new Set(QOREX_REFUSED_TYPE_URLS.slice(QOREX_REFUSED_TYPE_URLS.indexOf(
+  '/qorechain.abstractaccount.v1.MsgRegisterAuthenticator',
+)));
+
+/** Why the wallet refuses this message type, in words a dApp developer can act on. */
+function refusalReason(typeUrl) {
+  return ACCOUNT_AUTHORITY_TYPE_URLS.has(typeUrl)
+    ? 'it changes who may spend from the account (authenticators, spending rules, EVM windows and delegations), ' +
+        'which the user manages from QoreX itself'
+    : 'QoreX manages the account\'s post-quantum key itself';
+}
 
 const AUTHZ_EXEC = '/cosmos.authz.v1beta1.MsgExec';
 
@@ -77,7 +102,7 @@ function execBytes(value) {
   return Uint8Array.from(globalThis.atob(value), (c) => c.charCodeAt(0));
 }
 
-// Refuse PQC key management carried inside authz MsgExec, at any depth. A
+// Refuse the messages above carried inside authz MsgExec, at any depth. A
 // MsgExec that cannot be decoded is refused too: the wallet would not be able
 // to show what it does.
 function refuseKeyManagementInExec(value, where, depth) {
@@ -90,10 +115,8 @@ function refuseKeyManagementInExec(value, where, depth) {
   }
   exec.msgs.forEach((inner, j) => {
     if (QOREX_REFUSED_TYPE_URLS.includes(inner.typeUrl)) {
-      fail(
-        `${where}: ${AUTHZ_EXEC} carries ${inner.typeUrl}; PQC key management is refused inside authz ` +
-          '(QoreX manages the account\'s post-quantum key itself)',
-      );
+      const what = ACCOUNT_AUTHORITY_TYPE_URLS.has(inner.typeUrl) ? 'account authority' : 'PQC key management';
+      fail(`${where}: ${AUTHZ_EXEC} carries ${inner.typeUrl}; ${what} is refused inside authz (${refusalReason(inner.typeUrl)})`);
     }
     if (inner.typeUrl === AUTHZ_EXEC) refuseKeyManagementInExec(inner.value, `${where}.msgs[${j}]`, depth + 1);
   });
@@ -135,14 +158,16 @@ export function validateQorexRequest({ chainId, messages, memo = '', gasLimit } 
     }
     if (QOREX_REFUSED_TYPE_URLS.includes(m.typeUrl)) {
       fail(
-        `${m.typeUrl} is refused: QoreX manages the account's post-quantum key itself. ` +
-          'Key registration happens automatically on the account\'s first transaction.',
+        ACCOUNT_AUTHORITY_TYPE_URLS.has(m.typeUrl)
+          ? `${m.typeUrl} is refused: ${refusalReason(m.typeUrl)}.`
+          : `${m.typeUrl} is refused: QoreX manages the account's post-quantum key itself. ` +
+              'Key registration happens automatically on the account\'s first transaction.',
       );
     }
     const value = normaliseValue(m.value, i);
     if (m.typeUrl === AUTHZ_EXEC) {
       // authz is allowed, as in the wallet, but not as a way around the rule
-      // above: QoreX decodes MsgExec, shows it, and refuses PQC key management
+      // above: QoreX decodes MsgExec, shows it, and refuses the messages above
       // at any depth. Check the same here, so a dApp gets the reason up front.
       refuseKeyManagementInExec(value, `messages[${i}]`, 1);
     }
