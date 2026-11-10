@@ -171,7 +171,9 @@ Things worth knowing before you build a flow on it:
   one — `qorechain-vladi`, or `qorechain-diana` when the user has switched to
   testnet themselves. Ask the user to switch; you cannot.
 - **PQC key management is refused** (`MsgRegisterPQCKey`, `…V2`,
-  `MsgMigratePQCKey`, `MsgRotatePQCKey`, and `authz.MsgExec` wrapping them). The
+  `MsgMigratePQCKey`, `MsgRotatePQCKey`, the ML-KEM key messages
+  `MsgRegisterKEMKey` and `MsgRemoveKEMKey`, `MsgRegisterPQCMultisig`, and
+  `authz.MsgExec` wrapping any of them). The
   wallet owns the account's key. Registration happens on its own, on the
   account's first transaction.
 - **1–32 messages per call.** `connectQorex({ chainId })` on its own prompts the

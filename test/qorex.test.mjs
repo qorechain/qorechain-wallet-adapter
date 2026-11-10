@@ -99,6 +99,9 @@ test('PQC key management is refused locally, with the reason', () => {
     '/qorechain.pqc.v1.MsgRegisterPQCKeyV2',
     '/qorechain.pqc.v1.MsgMigratePQCKey',
     '/qorechain.pqc.v1.MsgRotatePQCKey',
+    '/qorechain.pqc.v1.MsgRegisterKEMKey',
+    '/qorechain.pqc.v1.MsgRemoveKEMKey',
+    '/qorechain.pqc.v1.MsgRegisterPQCMultisig',
   ]) {
     assert.throws(
       () => validateQorexRequest({ chainId: CHAIN, messages: [{ typeUrl, value: new Uint8Array() }] }),
@@ -114,7 +117,7 @@ test('authz MsgExec is allowed, but never as a way to send PQC key management', 
   const send = { typeUrl: '/cosmos.bank.v1beta1.MsgSend', value: new Uint8Array([1, 2, 3]) };
   const req = validateQorexRequest({ chainId: CHAIN, messages: [{ typeUrl: '/cosmos.authz.v1beta1.MsgExec', value: exec([send]) }] });
   assert.equal(req.messages[0].typeUrl, '/cosmos.authz.v1beta1.MsgExec');
-  for (const inner of ['/qorechain.pqc.v1.MsgRegisterPQCKeyV2', '/qorechain.pqc.v1.MsgRotatePQCKey']) {
+  for (const inner of ['/qorechain.pqc.v1.MsgRegisterPQCKeyV2', '/qorechain.pqc.v1.MsgRotatePQCKey', '/qorechain.pqc.v1.MsgRegisterKEMKey']) {
     assert.throws(
       () => validateQorexRequest({ chainId: CHAIN, messages: [{ typeUrl: '/cosmos.authz.v1beta1.MsgExec', value: exec([{ typeUrl: inner, value: new Uint8Array() }]) }] }),
       /PQC key management is refused inside authz/,

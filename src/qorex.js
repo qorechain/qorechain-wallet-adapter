@@ -54,6 +54,12 @@ export const QOREX_REFUSED_TYPE_URLS = Object.freeze([
   '/qorechain.pqc.v1.MsgRegisterPQCKeyV2',
   '/qorechain.pqc.v1.MsgMigratePQCKey',
   '/qorechain.pqc.v1.MsgRotatePQCKey',
+  // The rest of the chain's PQC key-management list: the account's ML-KEM key
+  // (whoever replaces it reads what is encrypted to the account from then on)
+  // and its PQC multisig member set.
+  '/qorechain.pqc.v1.MsgRegisterKEMKey',
+  '/qorechain.pqc.v1.MsgRemoveKEMKey',
+  '/qorechain.pqc.v1.MsgRegisterPQCMultisig',
 ]);
 
 const AUTHZ_EXEC = '/cosmos.authz.v1beta1.MsgExec';
