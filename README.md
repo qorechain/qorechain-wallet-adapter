@@ -160,6 +160,11 @@ try {
 }
 ```
 
+For CosmWasm and cross-VM messages, simulate and pass the result times at
+least 1.3 as `gasLimit`. From chain v3.2.8 the first call of a contract code in
+a block pays a load cost (a cw20 transfer is about 533k gas the first time,
+about 84k after), so the 400k default runs out of gas.
+
 Things worth knowing before you build a flow on it:
 
 - **`value` is protobuf bytes**, not a decoded message: `Uint8Array`, `number[]`
@@ -246,6 +251,10 @@ const msg = await rotateFromLegacyWalletKey({
 It refuses unless the key it re-derives is exactly the one registered, so it can
 move an account off a weak key but never mint one, and it never returns the old
 secret key.
+
+From chain v3.2.8 rotating, migrating or re-registering the PQC key closes the
+account's EVM window and its EIP-7702 consent: open the window again after the
+rotation lands.
 
 ## Usage (Keplr)
 
@@ -444,6 +453,46 @@ authorizes actions on three lanes:
 - **EVM** — `buildPhantomExecuteEvm` → `MsgExecuteEVM` (relayer broadcasts).
 - **Native** — `buildPhantomExecuteCosmos` → `MsgExecuteCosmos` (relayer broadcasts).
 
+### Linking a key from chain v3.2.8
+
+Two things are new and required:
+
+1. **Possession proof.** The key being linked signs a plain-text link message
+   (`authenticatorLinkMessage({ chainId, account, scheme, pubkey })`) that names
+   the chain, the account, the scheme and the key. `phantomPossessionProof` asks
+   Phantom (`signMessage`), `metaMaskPossessionProof` asks MetaMask
+   (`personal_sign`). Pass the result as `possessionProof` to
+   `registerAuthenticatorMsg` / `registerEthAuthenticatorMsg`; both throw without
+   it. Your registry must encode field 8 (`possession_proof`) of
+   `MsgRegisterAuthenticator`.
+2. **Spending rule.** A key with `send`, `evm`, `deploy`, `svm` or `all` needs the
+   account's first enabled spending rule to bound every denom (`perTxLimit` or
+   `dailyLimit`, or `allowedDenoms` each with a `denomLimits` amount). Keys linked
+   earlier without one are refused when they act.
+   `linkAuthenticatorMsgs({ registerMsg, rules })` returns
+   `[MsgUpdateSpendingRules, MsgRegisterAuthenticator]` for ONE owner-signed
+   transaction and refuses a value permission without a bounding rule.
+   `MsgUpdateSpendingRules` replaces the account's rules wholesale: pass every
+   rule to keep.
+
+```js
+const proof = await phantomPossessionProof({ wallet: phantom, chainId, account: qor1 });
+const registerMsg = registerAuthenticatorMsg({
+  owner: qor1, phantomPubkey, permissions: ['svm'], expiryUnix, possessionProof: proof,
+});
+const messages = linkAuthenticatorMsgs({
+  registerMsg, rules: [{ id: 'phantom', enabled: true, perTxLimit: 5_000_000n, dailyLimit: 20_000_000n }],
+});
+// sign and broadcast `messages` in one hybrid-signed transaction from qor1
+```
+
+**Failed executions.** From chain v3.2.8 a `MsgExecuteEVM` / `MsgExecuteCosmos`
+that is authorised but then fails (spending rule, call policy, a reverted call)
+returns `success=false` inside a transaction with code 0, and the nonce is
+consumed. Check every relayed result with
+`assertAuthenticatorExecutionsSucceeded(deliverTxResponse)` (or read
+`authenticatorExecutionResults`) instead of trusting the transaction code.
+
 ```js
 import { buildPhantomExecuteEvm, buildPhantomExecuteCosmos } from "@qorechain/wallet-adapter";
 
@@ -628,7 +677,16 @@ block time.
   bounds client-side first (`blocks` 1…17280, `maxTxs` 1…1000, `maxValue` > 0, all
   required, no floats), failing with a message that names the bound it broke.
 - `closeEvmWindowMsg({ sender })` → `{ typeUrl, value }`. Effective in the same block.
-- `decodeEvmWindowMsg(msg)` — the inverse, for confirmation screens.
+- Optional scope (chain v3.2.8 adds the last three): `nativeOnly`, `allowedTargets`
+  (0x recipients), `validators` (0x contracts whose signature check counts, such
+  as an ERC-4337 entry point), `stakingValidators` (`qorvaloper...` the account
+  may delegate or redelegate to through the window) and `ibcReceivers`
+  (`"<source channel>/<receiver>"` for ICS-20). At most 16 entries each, checked
+  by `validateEvmWindowScope`. From v3.2.8 the standard precompile methods are
+  refused through a window unless a list admits them, and undelegating, voting
+  and changing the withdraw address always need a post-quantum signed Cosmos
+  transaction.
+- `decodeEvmWindowMsg(msg)`: the inverse, for confirmation screens (includes the scope).
 - `validateEvmWindowBounds({ blocks, maxTxs, maxValue })` — the same check on its
   own, for validating an authorisation form before building anything.
 - `fetchEvmWindow({ rest, address, fetch? })` → the typed status above (BigInts).

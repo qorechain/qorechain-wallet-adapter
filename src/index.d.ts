@@ -74,7 +74,8 @@ export function resolveSvmAuthVersion(p?: { rest?: string; svmAuthVersion?: SvmA
 export interface SvmAuthOptions { chainId?: string; rest?: string; svmAuthVersion?: SvmAuthVersion | 'auto'; fetch?: typeof fetch; }
 export function buildPhantomSvmEnvelope(p: { wallet: any; programId?: string; accounts: SvmAccountMeta[]; data: Uint8Array; recentBlockhashHex: string } & SvmAuthOptions): Promise<any>;
 export function buildPhantomTransfer(p: { wallet: any; fromSvmAddr: string; toSvmAddr: string; lamports: number | bigint; recentBlockhashHex: string } & SvmAuthOptions): Promise<any>;
-export function registerAuthenticatorMsg(p: { owner: string; phantomPubkey: Uint8Array; permissions?: string[]; expiryUnix: number | bigint; label?: string }): { typeUrl: string; value: any };
+/** From chain v3.2.8 `possessionProof` is required (phantomPossessionProof). */
+export function registerAuthenticatorMsg(p: { owner: string; phantomPubkey: Uint8Array; permissions?: string[]; expiryUnix: number | bigint; label?: string; possessionProof: Uint8Array | number[] }): { typeUrl: string; value: any };
 // --- Per-network hybrid PQC sign-bytes (v1 legacy / v2, chain v3.2.0 / testnet v3.1.98) ---
 export type SignBytesVersion = 'v1' | 'v2';
 export type SignBytesVersionOption = SignBytesVersion | 'auto';
@@ -159,7 +160,27 @@ export function rotatePqcKeyMsgFromMnemonic(p: { account: string; mnemonic: stri
 /** The LEGACY (chain-bridge) ML-DSA-87 derivation `shake256(mnemonic)`. */
 export function derivePqcLegacy(mnemonic: string): PqcKeypairFull;
 /** Link a MetaMask / EVM key (by 0x address) as a scoped authenticator (owner-signed). */
-export function registerEthAuthenticatorMsg(p: { owner: string; account?: string; ethAddress: string; permissions?: string[]; expiryUnix: number | bigint; label?: string }): { typeUrl: string; value: any };
+/** From chain v3.2.8 `possessionProof` is required (metaMaskPossessionProof). */
+export function registerEthAuthenticatorMsg(p: { owner: string; account?: string; ethAddress: string; permissions?: string[]; expiryUnix: number | bigint; label?: string; possessionProof: Uint8Array | number[] }): { typeUrl: string; value: any };
+// --- Chain v3.2.8 key linking ---
+export const AUTHENTICATOR_LINK_DOMAIN: 'QoreChain authenticator link v1';
+export const VALUE_PERMISSIONS: readonly ['send', 'evm', 'deploy', 'svm', 'all'];
+/** The text the key being linked signs; pubkey is the 32-byte ed25519 key, the 33-byte secp256k1 key or the 20-byte address. */
+export function authenticatorLinkMessage(p: { chainId: string; account: string; scheme: string; pubkey: Uint8Array | number[] | string }): string;
+export function phantomPossessionProof(p: { wallet: any; chainId: string; account: string }): Promise<Uint8Array>;
+export function metaMaskPossessionProof(p: { provider: any; address: string; chainId: string; account: string }): Promise<Uint8Array>;
+export function requirePossessionProof(fn: string, proof: unknown): Uint8Array;
+export interface SpendingRuleInput { id?: string; enabled: boolean; perTxLimit?: number | bigint | string; dailyLimit?: number | bigint | string; allowedDenoms?: string[]; allowedEvmCalls?: string[]; denomLimits?: { denom: string; perTxLimit?: string; dailyLimit?: string }[]; }
+export function spendingRuleBoundsEveryDenom(rule: SpendingRuleInput | undefined): boolean;
+export function movesValue(permissions?: string[]): boolean;
+/** Replaces the account's rules wholesale. */
+export function updateSpendingRulesMsg(p: { owner: string; account?: string; rules: SpendingRuleInput[] }): { typeUrl: string; value: any };
+/** [MsgUpdateSpendingRules?, MsgRegisterAuthenticator], to send in one owner-signed transaction. */
+export function linkAuthenticatorMsgs(p: { registerMsg: { typeUrl: string; value: any }; rules?: SpendingRuleInput[] }): { typeUrl: string; value: any }[];
+export interface AuthenticatorExecutionResult { typeUrl: string; success: boolean; ret?: Uint8Array; gasUsed?: bigint; vmError?: string; reason?: string; }
+export function authenticatorExecutionResults(result: { msgResponses?: { typeUrl: string; value: Uint8Array }[]; events?: { type: string; attributes: { key: string; value: string }[] }[] }): AuthenticatorExecutionResult[];
+/** Throws when the tx failed or any authenticator execution returned success=false (a code 0 tx from chain v3.2.8). */
+export function assertAuthenticatorExecutionsSucceeded(result: any): AuthenticatorExecutionResult[];
 /** MetaMask (EIP-191 personal_sign) → MsgExecuteEVM ready for the relayer. `provider` is EIP-1193. */
 export function buildMetaMaskExecuteEvm(p: { provider: any; address: string; relayer: string; chainId: string; account: string; to?: string; value?: string; data?: Uint8Array; gasLimit?: number | bigint; nonce: number | bigint; digestVersion?: 'v1' | 'v2' }): Promise<{ typeUrl: string; value: any }>;
 /** MetaMask (EIP-191 personal_sign) → MsgExecuteCosmos ready for the relayer. */
@@ -191,11 +212,15 @@ export interface EvmWindowBounds {
   maxValue: WindowAmount;
 }
 /** MsgOpenEVMWindow, Any-encoded. Validates the bounds client-side first. */
-export function openEvmWindowMsg(p: EvmWindowBounds & { sender: string }): AnyMsg;
+export interface EvmWindowScope { nativeOnly?: boolean; allowedTargets?: string[]; validators?: string[]; stakingValidators?: string[]; ibcReceivers?: string[]; }
+export const MAX_EVM_WINDOW_TARGETS: 16;
+export const MAX_IBC_RECEIVER_LEN: 256;
+export function validateEvmWindowScope(s?: EvmWindowScope, fn?: string): Required<EvmWindowScope>;
+export function openEvmWindowMsg(p: EvmWindowBounds & EvmWindowScope & { sender: string }): AnyMsg;
 /** MsgCloseEVMWindow, Any-encoded. Takes effect in the same block. */
 export function closeEvmWindowMsg(p: { sender: string }): AnyMsg;
 /** Inverse of the composers, for confirmation screens and tests. */
-export function decodeEvmWindowMsg(msg: AnyMsg): { sender: string; blocks?: bigint; maxTxs?: bigint; maxValue?: string };
+export function decodeEvmWindowMsg(msg: AnyMsg): { sender: string; blocks?: bigint; maxTxs?: bigint; maxValue?: string } & Partial<Required<EvmWindowScope>>;
 /** The chain's ValidateBasic, client-side. Throws with a message naming the bound. */
 export function validateEvmWindowBounds(b: EvmWindowBounds, fn?: string): { blocks: bigint; maxTxs: bigint; maxValue: string };
 

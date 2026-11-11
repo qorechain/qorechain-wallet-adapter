@@ -28,6 +28,7 @@ import {
   toExactBytes, ML_DSA_87_PUBLIC_KEY_LENGTH, ML_DSA_87_SIGNATURE_LENGTH,
 } from './bytes.js';
 import { mldsa, shake256 } from '@qorechain/pqc';
+import { requirePossessionProof } from './authenticator-link.js';
 
 // ---- byte helpers (match the chain's binary.BigEndian + length-prefix framing) ----
 
@@ -290,13 +291,19 @@ async function ethPersonalSign(provider, address, digest) {
  * registerEthAuthenticatorMsg builds the owner-signed MsgRegisterAuthenticator
  * that links a MetaMask / EVM key (by its 0x address) to the owner's account.
  * `ethAddress` is the 0x-hex 20-byte address.
+ *
+ * From chain v3.2.8 `possessionProof` is required: the address's personal_sign
+ * of the link message (metaMaskPossessionProof). A key with a value permission
+ * also needs a spending rule on the account: use linkAuthenticatorMsgs.
  */
-export function registerEthAuthenticatorMsg({ owner, account = owner, ethAddress, permissions = ['evm'], expiryUnix, label = 'metamask' }) {
+export function registerEthAuthenticatorMsg({ owner, account = owner, ethAddress, permissions = ['evm'], expiryUnix, label = 'metamask', possessionProof }) {
+  const proof = requirePossessionProof('registerEthAuthenticatorMsg', possessionProof);
   return {
     typeUrl: '/qorechain.abstractaccount.v1.MsgRegisterAuthenticator',
     value: {
       owner, accountAddress: account, scheme: 'secp256k1',
       pubkey: hexToBytes(ethAddress), permissions, expiryUnix: BigInt(expiryUnix), label,
+      possessionProof: proof,
     },
   };
 }
@@ -373,4 +380,101 @@ export function rotatePqcKeyMsgFromMnemonic({ account, mnemonic, chainId, algori
 /** derivePqcLegacy exposes the LEGACY (chain-bridge) derivation for a mnemonic. */
 export function derivePqcLegacy(mnemonic) {
   return mldsa.keygen(shake256(enc.encode(mnemonic), 32));
+}
+
+// ---- execution results (chain v3.2.8) ----
+//
+// From chain v3.2.8 an authorised MsgExecuteEVM / MsgExecuteCosmos that then
+// fails (spending rule, call policy, a reverted call) returns success=false in a
+// transaction whose code is 0, and emits abstractaccount_execution_failed with
+// the reason. The nonce is consumed: the same signature cannot be relayed again.
+
+const EXEC_EVM = '/qorechain.abstractaccount.v1.MsgExecuteEVM';
+const EXEC_COSMOS = '/qorechain.abstractaccount.v1.MsgExecuteCosmos';
+
+function readProto(bytes) {
+  const buf = bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes || []);
+  const out = {};
+  let i = 0;
+  const varint = () => {
+    let shift = 0n, v = 0n;
+    for (;;) {
+      if (i >= buf.length) throw new Error('truncated response');
+      const b = buf[i++];
+      v |= BigInt(b & 0x7f) << shift;
+      if ((b & 0x80) === 0) return v;
+      shift += 7n;
+    }
+  };
+  while (i < buf.length) {
+    const key = Number(varint());
+    const field = key >>> 3;
+    const wire = key & 7;
+    if (wire === 0) out[field] = varint();
+    else if (wire === 2) {
+      const len = Number(varint());
+      if (i + len > buf.length) throw new Error('truncated response');
+      out[field] = buf.slice(i, i + len);
+      i += len;
+    } else if (wire === 1) i += 8;
+    else if (wire === 5) i += 4;
+    else throw new Error(`unexpected wire type ${wire}`);
+  }
+  return out;
+}
+
+function eventAttrs(ev) {
+  const o = {};
+  for (const a of ev?.attributes ?? []) o[a.key] = a.value;
+  return o;
+}
+
+/**
+ * The outcome of every MsgExecuteEVM / MsgExecuteCosmos in a delivered
+ * transaction (a cosmjs DeliverTxResponse or anything with `msgResponses` and
+ * `events`). Returns one entry per execute response, in order:
+ * `{ typeUrl, success, ret?, gasUsed?, vmError?, reason? }`; `reason` comes
+ * from the abstractaccount_execution_failed events, in order.
+ */
+export function authenticatorExecutionResults(result) {
+  const failures = (result?.events ?? [])
+    .filter((e) => e?.type === 'abstractaccount_execution_failed')
+    .map(eventAttrs);
+  const out = [];
+  let f = 0;
+  for (const r of result?.msgResponses ?? []) {
+    const t = String(r?.typeUrl ?? '');
+    if (t !== EXEC_EVM + 'Response' && t !== EXEC_COSMOS + 'Response') continue;
+    const p = readProto(r.value);
+    const entry = { typeUrl: t, success: (p[1] ?? 0n) !== 0n };
+    if (t === EXEC_EVM + 'Response') {
+      entry.ret = p[2] ?? new Uint8Array(0);
+      entry.gasUsed = p[3] ?? 0n;
+      entry.vmError = p[4] ? new TextDecoder().decode(p[4]) : '';
+    }
+    if (!entry.success) {
+      const ev = failures[f++];
+      if (ev) entry.reason = ev.reason ?? '';
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
+/**
+ * Throws when the transaction failed or any authenticator execution in it
+ * returned success=false (from chain v3.2.8 that happens in a code 0
+ * transaction). Returns the results otherwise.
+ */
+export function assertAuthenticatorExecutionsSucceeded(result) {
+  if (result && Number(result.code ?? 0) !== 0) {
+    throw new Error(`transaction failed with code ${result.code}: ${result.rawLog ?? ''}`);
+  }
+  const results = authenticatorExecutionResults(result);
+  const bad = results.find((r) => !r.success);
+  if (bad) {
+    const why = bad.reason || bad.vmError || 'no reason given';
+    throw new Error(`authenticator execution failed (${bad.typeUrl.replace('Response', '')}): ${why}; the nonce is consumed, sign a new request`);
+  }
+  return results;
 }

@@ -79,6 +79,7 @@ test('composers produce messages a TxBody accepts (the signHybrid carrier shape)
   assert.equal(decoded.messages[1].typeUrl, MSG_CLOSE_EVM_WINDOW_TYPE_URL);
   assert.deepEqual(decodeEvmWindowMsg(decoded.messages[0]), {
     sender: SENDER, blocks: 300n, maxTxs: 3n, maxValue: '1000000',
+    nativeOnly: false, allowedTargets: [], validators: [], stakingValidators: [], ibcReceivers: [],
   });
   // And a QoreChainSigner really carries them (the ML-DSA part is covered elsewhere).
   assert.ok(typeof QoreChainSigner.prototype.signHybrid === 'function');

@@ -10,8 +10,23 @@
 - `resolveSvmAuthVersion({ rest })` reads the network's protocol features and
   returns `'v3'` or `'v2'`; it throws when the list cannot be read.
 
+- Chain v3.2.8 key linking: `authenticatorLinkMessage`, `phantomPossessionProof`,
+  `metaMaskPossessionProof`, `spendingRuleBoundsEveryDenom`,
+  `updateSpendingRulesMsg` and `linkAuthenticatorMsgs` (the spending rule and the
+  link in one transaction).
+- `authenticatorExecutionResults` / `assertAuthenticatorExecutionsSucceeded`: read
+  `success=false` from `MsgExecuteEVM` / `MsgExecuteCosmos` inside a code 0
+  transaction (chain v3.2.8).
+- `openEvmWindowMsg` takes the window scope: `nativeOnly`, `allowedTargets`, and
+  from chain v3.2.8 `validators`, `stakingValidators`, `ibcReceivers`;
+  `decodeEvmWindowMsg` returns them; `validateEvmWindowScope` checks them.
+
 ### Changed (breaking)
 
+- `registerAuthenticatorMsg` / `registerEthAuthenticatorMsg` require
+  `possessionProof` (chain v3.2.8 refuses a link without it).
+- `decodeEvmWindowMsg` returns the scope fields (empty lists and
+  `nativeOnly: false` when absent).
 - `buildPhantomSvmEnvelope` / `buildPhantomTransfer` now choose the form to
   sign: pass `rest` and `chainId`, or `svmAuthVersion: 'v2' | 'v3'`. Without
   either they throw instead of signing a form the network may refuse.

@@ -68,13 +68,21 @@ export {
   buildPhantomExecuteEvm, buildPhantomExecuteCosmos,
   registerEthAuthenticatorMsg, buildMetaMaskExecuteEvm, buildMetaMaskExecuteCosmos,
   rotatePqcKeyMsgFromMnemonic, derivePqcLegacy,
+  authenticatorExecutionResults, assertAuthenticatorExecutionsSucceeded,
 } from './authenticator.js';
+// Chain v3.2.8 key linking: possession proof + spending rule.
+export {
+  AUTHENTICATOR_LINK_DOMAIN, VALUE_PERMISSIONS, authenticatorLinkMessage,
+  phantomPossessionProof, metaMaskPossessionProof, requirePossessionProof,
+  spendingRuleBoundsEveryDenom, movesValue, updateSpendingRulesMsg, linkAuthenticatorMsgs,
+} from './authenticator-link.js';
 // v3.2.0 EVM-lane authorisation window: composers + status query + classifier.
 // Building blocks only — nothing here opens a window by itself.
 export {
   MSG_OPEN_EVM_WINDOW_TYPE_URL, MSG_CLOSE_EVM_WINDOW_TYPE_URL,
   MAX_EVM_WINDOW_BLOCKS, MAX_EVM_WINDOW_TXS, EVM_WINDOW_QUERY_PATH,
   openEvmWindowMsg, closeEvmWindowMsg, decodeEvmWindowMsg, validateEvmWindowBounds,
+  validateEvmWindowScope, MAX_EVM_WINDOW_TARGETS, MAX_IBC_RECEIVER_LEN,
   fetchEvmWindow, parseEvmWindow,
   isEvmWindowRejection, EVM_WINDOW_REJECTION_KINDS, EVM_WINDOW_REMEDIES,
 } from './evm-window.js';

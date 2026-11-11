@@ -18,6 +18,8 @@
 // chain-bound v3 digest once the network enables "svm-relayed-chain-bound";
 // buildPhantomSvmEnvelope reads the feature list and signs the form in force.
 
+import { requirePossessionProof } from './authenticator-link.js';
+
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const B58MAP = (() => { const m = {}; for (let i = 0; i < B58.length; i++) m[B58[i]] = i; return m; })();
 
@@ -248,8 +250,15 @@ export async function buildPhantomTransfer({
  * registerAuthenticatorMsg builds the owner-signed MsgRegisterAuthenticator that
  * links a Phantom ed25519 key to the owner's own account. Broadcast it with the
  * standard QoreChainSigner (PQC-hybrid) like any other Cosmos message.
+ *
+ * From chain v3.2.8 `possessionProof` is required: the Phantom key's signature
+ * over the link message (phantomPossessionProof). A key with a value permission
+ * (send, evm, deploy, svm, all) also needs a spending rule on the account that
+ * bounds every denom: send both with linkAuthenticatorMsgs. Your registry must
+ * encode field 8 (possession_proof) of MsgRegisterAuthenticator.
  */
-export function registerAuthenticatorMsg({ owner, phantomPubkey, permissions = ['svm'], expiryUnix, label = 'phantom' }) {
+export function registerAuthenticatorMsg({ owner, phantomPubkey, permissions = ['svm'], expiryUnix, label = 'phantom', possessionProof }) {
+  const proof = requirePossessionProof('registerAuthenticatorMsg', possessionProof);
   return {
     typeUrl: '/qorechain.abstractaccount.v1.MsgRegisterAuthenticator',
     value: {
@@ -260,6 +269,7 @@ export function registerAuthenticatorMsg({ owner, phantomPubkey, permissions = [
       permissions,
       expiryUnix: BigInt(expiryUnix),
       label,
+      possessionProof: proof,
     },
   };
 }

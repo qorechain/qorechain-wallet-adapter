@@ -163,10 +163,14 @@ export function validateEvmWindowBounds({ blocks, maxTxs, maxValue }, fn = 'open
  * advances the account sequence, which on QoreChain is also the EVM nonce. Read
  * the nonce AFTER this lands.
  */
-export function openEvmWindowMsg({ sender, blocks, maxTxs, maxValue }) {
+export function openEvmWindowMsg({
+  sender, blocks, maxTxs, maxValue,
+  nativeOnly = false, allowedTargets = [], validators = [], stakingValidators = [], ibcReceivers = [],
+}) {
   const fn = 'openEvmWindowMsg';
   requireAddress(fn, 'sender', sender);
   const bounds = validateEvmWindowBounds({ blocks, maxTxs, maxValue }, fn);
+  const scope = validateEvmWindowScope({ nativeOnly, allowedTargets, validators, stakingValidators, ibcReceivers }, fn);
   return {
     typeUrl: MSG_OPEN_EVM_WINDOW_TYPE_URL,
     value: Uint8Array.from([
@@ -174,7 +178,89 @@ export function openEvmWindowMsg({ sender, blocks, maxTxs, maxValue }) {
       ...varintField(2, bounds.blocks),     // blocks
       ...varintField(3, bounds.maxTxs),     // max_txs
       ...stringField(4, bounds.maxValue),   // max_value (cosmos.Int, uqor)
+      ...(scope.nativeOnly ? varintField(5, 1n) : []),                  // native_only
+      ...scope.allowedTargets.flatMap((t) => stringField(6, t)),        // allowed_targets
+      ...scope.validators.flatMap((t) => stringField(7, t)),            // validators (v3.2.8)
+      ...scope.stakingValidators.flatMap((t) => stringField(8, t)),     // staking_validators (v3.2.8)
+      ...scope.ibcReceivers.flatMap((t) => stringField(9, t)),          // ibc_receivers (v3.2.8)
     ]),
+  };
+}
+
+/** The chain's MaxEVMWindowTargets: the most entries any one scope list may hold. */
+export const MAX_EVM_WINDOW_TARGETS = 16;
+/** The chain's MaxIBCReceiverLen. */
+export const MAX_IBC_RECEIVER_LEN = 256;
+
+const HEX_ADDRESS = /^0[xX][0-9a-fA-F]{40}$/;
+const VALOPER = /^qorvaloper1[02-9ac-hj-np-z]{38,90}$/;
+
+function scopeList(fn, field, list, check) {
+  if (list === undefined || list === null) return [];
+  if (!Array.isArray(list)) throw new Error(`${fn}: ${field} must be an array`);
+  if (list.length > MAX_EVM_WINDOW_TARGETS) {
+    throw new Error(`${fn}: ${field} lists ${list.length} entries, the maximum is ${MAX_EVM_WINDOW_TARGETS}`);
+  }
+  const seen = new Set();
+  return list.map((raw) => {
+    if (typeof raw !== 'string') throw new Error(`${fn}: ${field} entries must be strings`);
+    const { value, key } = check(raw);
+    if (seen.has(key)) throw new Error(`${fn}: ${field} lists ${raw} more than once`);
+    seen.add(key);
+    return value;
+  });
+}
+
+/**
+ * Check the optional scope of a window the way the chain does, and return it
+ * normalised. All lists are optional and hold at most 16 entries each.
+ *   - nativeOnly: the window admits native QOR transfers only (no calldata, no
+ *     contract creation, no recipient with code).
+ *   - allowedTargets: the only recipients the window admits (0x addresses).
+ *   - validators (chain v3.2.8): contracts whose check of the account's
+ *     signature counts for its own actions (a validator module, an ERC-4337
+ *     entry point). It does not narrow where transactions go.
+ *   - stakingValidators (chain v3.2.8): the validators (qorvaloper...) the
+ *     account may delegate or redelegate to through the window. Empty: staking
+ *     through the window is refused.
+ *   - ibcReceivers (chain v3.2.8): "<source channel>/<receiver>" destinations
+ *     for ICS-20 transfers of native QOR. Empty: ICS-20 through the window is
+ *     refused.
+ * From chain v3.2.8 the standard precompile methods are refused through a window
+ * unless one of these lists admits them, and undelegating, voting and changing
+ * the withdraw address are always refused through a window: send those as
+ * post-quantum signed Cosmos transactions.
+ */
+export function validateEvmWindowScope(
+  { nativeOnly = false, allowedTargets = [], validators = [], stakingValidators = [], ibcReceivers = [] } = {},
+  fn = 'validateEvmWindowScope',
+) {
+  if (typeof nativeOnly !== 'boolean') throw new Error(`${fn}: nativeOnly must be a boolean`);
+  const hex = (field) => (raw) => {
+    if (!HEX_ADDRESS.test(raw)) throw new Error(`${fn}: ${field}: ${JSON.stringify(raw)} is not a 0x-prefixed 20-byte address`);
+    const value = raw.toLowerCase();
+    return { value, key: value };
+  };
+  return {
+    nativeOnly,
+    allowedTargets: scopeList(fn, 'allowedTargets', allowedTargets, hex('allowedTargets')),
+    validators: scopeList(fn, 'validators', validators, hex('validators')),
+    stakingValidators: scopeList(fn, 'stakingValidators', stakingValidators, (raw) => {
+      const value = raw.toLowerCase();
+      if (!VALOPER.test(value)) throw new Error(`${fn}: stakingValidators: ${JSON.stringify(raw)} is not a validator operator address (qorvaloper...)`);
+      return { value, key: value };
+    }),
+    ibcReceivers: scopeList(fn, 'ibcReceivers', ibcReceivers, (raw) => {
+      if (raw.length === 0 || raw.length > MAX_IBC_RECEIVER_LEN) {
+        throw new Error(`${fn}: ibcReceivers: ${JSON.stringify(raw)} must be 1 to ${MAX_IBC_RECEIVER_LEN} characters`);
+      }
+      if (/[\s,]/.test(raw)) throw new Error(`${fn}: ibcReceivers: ${JSON.stringify(raw)} contains whitespace or a comma`);
+      const i = raw.indexOf('/');
+      if (i <= 0 || i === raw.length - 1) {
+        throw new Error(`${fn}: ibcReceivers: ${JSON.stringify(raw)} is not <source channel>/<receiver>`);
+      }
+      return { value: raw, key: raw };
+    }),
   };
 }
 
@@ -190,6 +276,9 @@ export function closeEvmWindowMsg({ sender }) {
     value: Uint8Array.from(stringField(1, sender)),
   };
 }
+
+// MsgOpenEVMWindow repeated string fields, by field number.
+const LIST_FIELDS = { 6: 'allowedTargets', 7: 'validators', 8: 'stakingValidators', 9: 'ibcReceivers' };
 
 /**
  * Decode either window message back from its Any encoding — the inverse of the
@@ -223,17 +312,24 @@ export function decodeEvmWindowMsg({ typeUrl, value } = {}) {
       const v = readVarint();
       if (field === 2) out.blocks = v;
       else if (field === 3) out.maxTxs = v;
+      else if (field === 5) out.nativeOnly = v !== 0n;
     } else if (wire === 2) {
       const len = Number(readVarint());
+      if (i + len > buf.length) throw new Error('decodeEvmWindowMsg: truncated field');
       const s = td.decode(buf.subarray(i, i + len));
       i += len;
       if (field === 1) out.sender = s;
       else if (field === 4) out.maxValue = s;
+      else if (LIST_FIELDS[field]) (out[LIST_FIELDS[field]] ??= []).push(s);
     } else {
       throw new Error(`decodeEvmWindowMsg: unexpected wire type ${wire} for field ${field}`);
     }
   }
-  return typeUrl === MSG_CLOSE_EVM_WINDOW_TYPE_URL ? { sender: out.sender } : out;
+  if (typeUrl === MSG_CLOSE_EVM_WINDOW_TYPE_URL) return { sender: out.sender };
+  return {
+    nativeOnly: false, allowedTargets: [], validators: [], stakingValidators: [], ibcReceivers: [],
+    ...out,
+  };
 }
 
 // ---------------------------------------------------------------------------
