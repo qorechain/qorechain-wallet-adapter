@@ -18,7 +18,8 @@
 // See qorex docs/DAPP-INTEGRATION.md for the wallet side of this contract.
 
 /** The provider object QoreX injects for the QoreChain (Cosmos) lane. */
-import { MsgExec } from 'cosmjs-types/cosmos/authz/v1beta1/tx.js';
+import { MsgExec, MsgGrant } from 'cosmjs-types/cosmos/authz/v1beta1/tx.js';
+import { GenericAuthorization } from 'cosmjs-types/cosmos/authz/v1beta1/authz.js';
 
 export function getQorexNative() {
   return globalThis.window?.qorex?.native;
@@ -46,7 +47,8 @@ export const QOREX_MIN_GAS_LIMIT = 100_000;
 export const QOREX_MAX_GAS_LIMIT = 5_000_000;
 
 /**
- * Messages the wallet refuses from a dApp, directly or inside authz MsgExec:
+ * Messages the wallet refuses from a dApp, directly, inside authz MsgExec, or
+ * as the message of an authz GenericAuthorization grant:
  * PQC key management (the wallet manages the account's keys itself, and a dApp
  * that could rotate them could take the account) and anything that grants
  * standing authority over the account.
@@ -88,6 +90,31 @@ function refusalReason(typeUrl) {
 }
 
 const AUTHZ_EXEC = '/cosmos.authz.v1beta1.MsgExec';
+const AUTHZ_GRANT = '/cosmos.authz.v1beta1.MsgGrant';
+const GENERIC_AUTHORIZATION = '/cosmos.authz.v1beta1.GenericAuthorization';
+
+// A MsgGrant with a GenericAuthorization for a refused message hands the
+// grantee the right to send that message for the account: refuse it as the
+// message itself. A MsgGrant that cannot be decoded is refused too.
+function refuseGrantOfRefused(value, where) {
+  let grant;
+  try {
+    grant = MsgGrant.decode(execBytes(value));
+  } catch {
+    fail(`${where}: ${AUTHZ_GRANT} could not be decoded`);
+  }
+  const auth = grant.grant?.authorization;
+  if (auth?.typeUrl !== GENERIC_AUTHORIZATION) return;
+  let msg;
+  try {
+    msg = GenericAuthorization.decode(auth.value).msg;
+  } catch {
+    fail(`${where}: ${AUTHZ_GRANT} carries a GenericAuthorization that could not be decoded`);
+  }
+  if (QOREX_REFUSED_TYPE_URLS.includes(msg)) {
+    fail(`${where}: ${AUTHZ_GRANT} grants ${msg}; granting it is refused like the message itself (${refusalReason(msg)})`);
+  }
+}
 
 function fail(msg) {
   throw new Error(`qorexSignAndBroadcast: ${msg}`);
@@ -119,6 +146,7 @@ function refuseKeyManagementInExec(value, where, depth) {
       fail(`${where}: ${AUTHZ_EXEC} carries ${inner.typeUrl}; ${what} is refused inside authz (${refusalReason(inner.typeUrl)})`);
     }
     if (inner.typeUrl === AUTHZ_EXEC) refuseKeyManagementInExec(inner.value, `${where}.msgs[${j}]`, depth + 1);
+    if (inner.typeUrl === AUTHZ_GRANT) refuseGrantOfRefused(inner.value, `${where}.msgs[${j}]`);
   });
 }
 
@@ -171,6 +199,7 @@ export function validateQorexRequest({ chainId, messages, memo = '', gasLimit } 
       // at any depth. Check the same here, so a dApp gets the reason up front.
       refuseKeyManagementInExec(value, `messages[${i}]`, 1);
     }
+    if (m.typeUrl === AUTHZ_GRANT) refuseGrantOfRefused(value, `messages[${i}]`);
     return { typeUrl: m.typeUrl, value };
   });
   if (typeof memo !== 'string') fail('memo must be a string');

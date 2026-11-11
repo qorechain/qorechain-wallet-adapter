@@ -21,6 +21,10 @@
   from chain v3.2.8 `validators`, `stakingValidators`, `ibcReceivers`;
   `decodeEvmWindowMsg` returns them; `validateEvmWindowScope` checks them.
 
+- The QoreX request check also refuses an authz `MsgGrant` whose
+  `GenericAuthorization` names a message it refuses (directly and inside
+  `MsgExec`), as QoreX does, and a `MsgGrant` it cannot decode.
+
 ### Changed (breaking)
 
 - `registerAuthenticatorMsg` / `registerEthAuthenticatorMsg` require

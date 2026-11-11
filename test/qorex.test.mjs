@@ -366,3 +366,34 @@ test('rotatePqcKeyMsg refuses a key string it would previously have UTF-8-encode
     /oldPublicKey/,
   );
 });
+
+// ---- authz grants of a refused message ----
+
+import { MsgGrant as GrantMsg, MsgExec as ExecMsg } from 'cosmjs-types/cosmos/authz/v1beta1/tx.js';
+import { GenericAuthorization as GenericAuth } from 'cosmjs-types/cosmos/authz/v1beta1/authz.js';
+
+const grantOf = (msg) => GrantMsg.encode(GrantMsg.fromPartial({
+  granter: 'qor1granter', grantee: 'qor1grantee',
+  grant: { authorization: { typeUrl: '/cosmos.authz.v1beta1.GenericAuthorization', value: GenericAuth.encode({ msg }).finish() } },
+})).finish();
+
+test('a GenericAuthorization grant of a refused message is refused, directly and inside MsgExec', () => {
+  const base = { chainId: 'qorechain-diana', gasLimit: 200_000 };
+  for (const t of ['/qorechain.pqc.v1.MsgOpenEVMWindow', '/qorechain.pqc.v1.MsgRotatePQCKey']) {
+    assert.throws(
+      () => validateQorexRequest({ ...base, messages: [{ typeUrl: '/cosmos.authz.v1beta1.MsgGrant', value: grantOf(t) }] }),
+      new RegExp(`MsgGrant grants ${t.replace(/\./g, '\\.')}; granting it is refused`),
+    );
+    const exec = ExecMsg.encode(ExecMsg.fromPartial({ grantee: 'qor1g', msgs: [{ typeUrl: '/cosmos.authz.v1beta1.MsgGrant', value: grantOf(t) }] })).finish();
+    assert.throws(
+      () => validateQorexRequest({ ...base, messages: [{ typeUrl: '/cosmos.authz.v1beta1.MsgExec', value: exec }] }),
+      /msgs\[0\]: \/cosmos\.authz\.v1beta1\.MsgGrant grants/,
+    );
+  }
+  // A grant of an ordinary message passes; an undecodable grant does not.
+  validateQorexRequest({ ...base, messages: [{ typeUrl: '/cosmos.authz.v1beta1.MsgGrant', value: grantOf('/cosmos.bank.v1beta1.MsgSend') }] });
+  assert.throws(
+    () => validateQorexRequest({ ...base, messages: [{ typeUrl: '/cosmos.authz.v1beta1.MsgGrant', value: Uint8Array.from([0xff, 0xff]) }] }),
+    /MsgGrant could not be decoded/,
+  );
+});
