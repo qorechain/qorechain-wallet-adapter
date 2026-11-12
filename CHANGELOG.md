@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.0] - 2026-11-12
+
+Support for chain v3.2.8 (the testnet `qorechain-diana` runs it from 12 November
+2026).
 
 ### Added
 
