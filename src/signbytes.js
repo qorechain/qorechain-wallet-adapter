@@ -14,7 +14,8 @@
 // v2 (qorechain-vladi mainnet, qorechain-diana testnet) verifies v1 until that
 // upgrade plan is applied on it, and v2 from then on. Any other chain verifies
 // v2 from its first block. The two networks upgrade at different heights, so a
-// client must ASK the target network (applied_plan) rather than hardcode a form.
+// client must ASK the target network (protocol feature switches, then
+// applied_plan) rather than hardcode a form.
 // That is what resolveSignBytesVersion does.
 //
 // The switch ships under TWO plan names: the release is "v3.2.0", but the
@@ -115,17 +116,54 @@ export function clearSignBytesCache() { cache.clear(); }
 
 function normRest(rest) { return String(rest).replace(/\/+$/, ''); }
 
+/** The protocol feature switch that moves a network to the v2 sign-bytes. */
+export const PQC_SIGN_BYTES_V2_FEATURE = 'pqc-sign-bytes-v2';
+
+/**
+ * Read one protocol feature switch (`GET {rest}/qorechain/pqc/v1/protocol_features`).
+ * Returns 'enabled' or 'disabled' when the node lists it, and 'not-served' when
+ * the node has no answer for it: HTTP 404 or 501 (below chain v3.2.4), an empty
+ * list, or the switch not listed. Throws when the network could not be asked
+ * (a network error, another HTTP error, an answer that is not JSON): never read
+ * that as "off", a fork or event chain reads applied plans as height 0 while it
+ * runs the new rules.
+ */
+export async function lookupProtocolFeature({ rest, name, fetch = globalThis.fetch } = {}) {
+  const url = `${normRest(rest)}/qorechain/pqc/v1/protocol_features`;
+  let res;
+  try {
+    res = await fetch(url, { headers: { accept: 'application/json' } });
+  } catch (e) {
+    throw new Error(`cannot reach ${url}: ${e && e.message ? e.message : e}`);
+  }
+  if (res && (res.status === 404 || res.status === 501)) return 'not-served';
+  if (!res || !res.ok) throw new Error(`protocol_features query failed: HTTP ${res ? res.status : 'no response'} from ${url}`);
+  let body;
+  try {
+    body = await res.json();
+  } catch (e) {
+    throw new Error(`protocol_features answer from ${url} is not JSON: ${e && e.message ? e.message : e}`);
+  }
+  if (body === null || typeof body !== 'object' || (body.features !== undefined && !Array.isArray(body.features))) {
+    throw new Error(`protocol_features answer from ${url} has no features list`);
+  }
+  const hit = (body.features ?? []).find((f) => f && f.name === name);
+  if (!hit) return 'not-served';
+  return hit.enabled === true ? 'enabled' : 'disabled';
+}
+
 /**
  * Resolve the hybrid sign-bytes form for a network.
  *   - 'v1' | 'v2' are returned as-is (no network).
  *   - 'auto' (default): a chain that is not a legacy network gets 'v2' with no
- *     HTTP; a legacy network is asked `GET {rest}/cosmos/upgrade/v1beta1/applied_plan/{name}`
- *     for EVERY name in SIGN_BYTES_V2_UPGRADES and signs v2 iff the numeric
- *     height of ANY of them is > 0. The names are asked in order and the first
- *     positive height wins, so a network on the current release costs one
- *     request and one that upgraded under the earlier name costs two. Answers
- *     are cached per (rest, chainId) for `ttlMs`; `forceRefresh` bypasses the cache.
- * Throws (never guesses) when a legacy network has no `rest` or a query fails.
+ *     HTTP. A legacy network is asked for its protocol feature switches first:
+ *     'v2' when `pqc-sign-bytes-v2` is enabled, 'v1' when it is listed and off.
+ *     Only when the node has no answer for the switch (HTTP 404/501, not listed)
+ *     is it asked `GET {rest}/cosmos/upgrade/v1beta1/applied_plan/{name}` for
+ *     the names in SIGN_BYTES_V2_UPGRADES (v2 iff any numeric height is > 0).
+ *     Answers are cached per (rest, chainId) for `ttlMs`; failures are not
+ *     cached; `forceRefresh` bypasses the cache.
+ * Throws (never guesses) when a legacy network has no `rest` or cannot be asked.
  */
 export async function resolveSignBytesVersion({
   chainId, rest, signBytesVersion = 'auto', fetch = globalThis.fetch, ttlMs = 60_000, forceRefresh = false,
@@ -153,6 +191,19 @@ export async function resolveSignBytesVersion({
   if (typeof fetch !== 'function') {
     throw new Error(`Cannot query ${base}: no fetch implementation available; ${hint}.`);
   }
+
+  let state;
+  try {
+    state = await lookupProtocolFeature({ rest: base, name: PQC_SIGN_BYTES_V2_FEATURE, fetch });
+  } catch (e) {
+    throw new Error(`Cannot ask ${base} which hybrid sign-bytes form it verifies (${e && e.message ? e.message : e}); retry, or ${hint}.`);
+  }
+  if (state !== 'not-served') {
+    const version = state === 'enabled' ? 'v2' : 'v1';
+    cache.set(key, { version, at: Date.now() });
+    return version;
+  }
+
   const plans = `${base}/cosmos/upgrade/v1beta1/applied_plan/{${SIGN_BYTES_V2_UPGRADES.join(',')}}`;
   let version;
   try {

@@ -10,6 +10,7 @@ import {
   hybridSignBytesV1, hybridSignBytesV2, hybridSignBytes,
   signBytesVersionFor, resolveSignBytesVersion, clearSignBytesCache,
   isHybridSignBytesRejection, QoreChainSigner, signHybridEth, walletFromSeed,
+  PQC_SIGN_BYTES_V2_FEATURE, lookupProtocolFeature,
 } from '../src/index.js';
 import * as pkg from '../src/index.js';
 
@@ -21,10 +22,17 @@ const SEED = hb('8a9bacbdcedff00112233445566778899aabbccddeef0011223344556677889
 const MAIN = 'https://lcd.example/mainnet';
 const TEST = 'https://lcd.example/testnet';
 
+// The plan-only fixtures below model a node that does not serve the protocol
+// feature switches (HTTP 404, below chain v3.2.4), so the resolver falls back
+// to the upgrade plans. That request is answered here and not recorded.
+const FEATURES = '/qorechain/pqc/v1/protocol_features';
+const notServed = { ok: false, status: 404, json: async () => ({}) };
+
 // Fake fetch: records calls, answers from a table keyed by URL prefix.
 function fakeFetch(table) {
   const calls = [];
   const f = async (url) => {
+    if (url.endsWith(FEATURES) && !Object.keys(table).some((p) => url.startsWith(p) && p.endsWith(FEATURES))) return notServed;
     calls.push(url);
     for (const [prefix, ans] of Object.entries(table)) {
       if (url.startsWith(prefix)) {
@@ -44,6 +52,7 @@ function fakeFetch(table) {
 function planFetch(heights, base = MAIN) {
   const calls = [];
   const f = async (url) => {
+    if (url.endsWith(FEATURES)) return notServed;
     calls.push(url);
     const name = url.slice(url.lastIndexOf('/') + 1);
     const ans = Object.prototype.hasOwnProperty.call(heights, name) ? heights[name] : {};
@@ -361,4 +370,60 @@ test('signHybridEth: explicit form used and reported; legacy chain with no versi
   const q = pqcSigOf(tx2);
   assert.equal(mldsa.verify(w.pqc.publicKey, hybridSignBytesV2('qorechain-diana', q.b0, q.authInfoBytes), q.sig), true);
   assert.equal(mldsa.verify(w.pqc.publicKey, hybridSignBytesV1(q.b0, q.authInfoBytes), q.sig), false);
+});
+
+// --- protocol feature switches first (forks, devnets and event chains read applied plans as 0) ---
+
+function featuresFetch(answer) {
+  const calls = [];
+  const f = async (url) => {
+    calls.push(url);
+    if (url.endsWith(FEATURES)) {
+      if (answer instanceof Error) throw answer;
+      if (typeof answer === 'number') return { ok: false, status: answer, json: async () => ({}) };
+      if (answer === 'not-json') return { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token <'); } };
+      return { ok: true, status: 200, json: async () => ({ features: answer }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ height: '5746000' }) };
+  };
+  f.calls = calls;
+  return f;
+}
+const sw = (name, enabled) => ({ name, enabled, known: true, staged: false });
+
+test('features: pqc-sign-bytes-v2 enabled -> v2 with one request, no plans (a fork with no applied plan)', async () => {
+  const f = featuresFetch([sw('other', true), sw(PQC_SIGN_BYTES_V2_FEATURE, true)]);
+  assert.equal(await resolveSignBytesVersion({ chainId: 'qorechain-diana', rest: TEST, fetch: f }), 'v2');
+  assert.deepEqual(f.calls, [`${TEST}${FEATURES}`]);
+});
+
+test('features: listed and off -> v1, no plans', async () => {
+  const f = featuresFetch([sw(PQC_SIGN_BYTES_V2_FEATURE, false)]);
+  assert.equal(await resolveSignBytesVersion({ chainId: 'qorechain-vladi', rest: MAIN, fetch: f }), 'v1');
+  assert.equal(f.calls.length, 1);
+});
+
+for (const [label, answer] of [['404', 404], ['501', 501], ['an empty list', []], ['the switch not listed', [sw('other', true)]]]) {
+  test(`features: ${label} -> falls back to the plans`, async () => {
+    const f = featuresFetch(answer);
+    assert.equal(await resolveSignBytesVersion({ chainId: 'qorechain-vladi', rest: MAIN, fetch: f }), 'v2');
+    assert.ok(f.calls.some((u) => u.includes('/applied_plan/')));
+  });
+}
+
+for (const [label, answer] of [['a network error', new TypeError('fetch failed')], ['a 500', 500], ['a 429', 429], ['a body that is not JSON', 'not-json']]) {
+  test(`features: ${label} -> throws, never asks the plans, nothing cached`, async () => {
+    const f = featuresFetch(answer);
+    await assert.rejects(resolveSignBytesVersion({ chainId: 'qorechain-vladi', rest: MAIN, fetch: f }), /Cannot ask .* which hybrid sign-bytes form/);
+    assert.deepEqual(f.calls, [`${MAIN}${FEATURES}`]);
+    await assert.rejects(resolveSignBytesVersion({ chainId: 'qorechain-vladi', rest: MAIN, fetch: f }));
+    assert.equal(f.calls.length, 2);
+  });
+}
+
+test('features: lookupProtocolFeature reports each state', async () => {
+  assert.equal(await lookupProtocolFeature({ rest: MAIN, name: 'x', fetch: featuresFetch([sw('x', true)]) }), 'enabled');
+  assert.equal(await lookupProtocolFeature({ rest: MAIN, name: 'x', fetch: featuresFetch([sw('x', false)]) }), 'disabled');
+  assert.equal(await lookupProtocolFeature({ rest: MAIN, name: 'x', fetch: featuresFetch(404) }), 'not-served');
+  await assert.rejects(lookupProtocolFeature({ rest: MAIN, name: 'x', fetch: featuresFetch(503) }), /HTTP 503/);
 });

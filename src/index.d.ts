@@ -102,6 +102,17 @@ export function resolveSignBytesVersion(opts: {
   forceRefresh?: boolean;
 }): Promise<SignBytesVersion>;
 export function clearSignBytesCache(): void;
+/** The protocol feature switch that moves a network to the v2 sign-bytes. */
+export const PQC_SIGN_BYTES_V2_FEATURE: "pqc-sign-bytes-v2";
+/**
+ * Read one protocol feature switch: "enabled" / "disabled" when listed, "not-served" on HTTP 404/501,
+ * an empty list or an unlisted switch. Throws when the network could not be asked.
+ */
+export function lookupProtocolFeature(opts: {
+  rest: string;
+  name: string;
+  fetch?: typeof globalThis.fetch;
+}): Promise<"enabled" | "disabled" | "not-served">;
 /** True iff the error/result is the chain refusing the hybrid PQC signature (codespace "pqc", code 21). */
 export function isHybridSignBytesRejection(errOrResult: unknown): boolean;
 /** TxRaw bytes plus the sign-bytes form that was used. */

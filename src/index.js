@@ -45,7 +45,7 @@ export {
   HYBRID_SIGN_BYTES_V2_DOMAIN, SIGN_BYTES_V2_UPGRADE, SIGN_BYTES_V2_UPGRADES, LEGACY_SIGN_BYTES_CHAINS,
   hybridSignBytesV1, hybridSignBytesV2, hybridSignBytes,
   signBytesVersionFor, resolveSignBytesVersion, clearSignBytesCache,
-  isHybridSignBytesRejection,
+  isHybridSignBytesRejection, PQC_SIGN_BYTES_V2_FEATURE, lookupProtocolFeature,
 } from './signbytes.js';
 // Phantom / any-ed25519-wallet support: drive the one unified account from Phantom.
 export {
