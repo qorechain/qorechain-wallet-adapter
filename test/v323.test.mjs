@@ -5,6 +5,7 @@ import {
   evmAuthSignBytes,
   evmAuthSignBytesV2,
   resolveEvmAuthDigestVersion,
+  AA_HARDENING_FEATURE,
   buildMetaMaskExecuteEvm,
 } from '../src/index.js';
 
@@ -32,14 +33,38 @@ test('AA digests match the chain byte for byte', async () => {
   await assert.rejects(evmAuthSignBytesV2({ ...input, gasLimit: 0 }), /gasLimit/);
 });
 
-test('resolveEvmAuthDigestVersion follows the v3.2.3 plan', async () => {
-  const answer = (height) => async () => ({ ok: true, status: 200, json: async () => ({ height }) });
+test('resolveEvmAuthDigestVersion falls back to the v3.2.3 plan on a node without the switches', async () => {
+  const answer = (height) => async (url) => url.endsWith('/protocol_features')
+    ? { ok: false, status: 404, json: async () => ({}) }
+    : { ok: true, status: 200, json: async () => ({ height }) };
   assert.equal(await resolveEvmAuthDigestVersion({ rest: 'https://lcd/', fetch: answer('0') }), 'v1');
   assert.equal(await resolveEvmAuthDigestVersion({ rest: 'https://lcd', fetch: answer('8003746') }), 'v2');
-  await assert.rejects(
-    resolveEvmAuthDigestVersion({ rest: 'https://lcd', fetch: async () => ({ ok: false, status: 503 }) }),
-    /HTTP 503/,
-  );
+});
+
+test('resolveEvmAuthDigestVersion reads the abstractaccount-hardening switch first', async () => {
+  const calls = [];
+  const node = (features, height = '0') => async (url) => {
+    calls.push(url);
+    if (url.endsWith('/protocol_features')) {
+      if (features instanceof Error) throw features;
+      if (typeof features === 'number') return { ok: false, status: features, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ features }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ height }) };
+  };
+  const sw = (enabled) => [{ name: AA_HARDENING_FEATURE, enabled, known: true, staged: false }];
+  // On, with no applied plan (a fork or event chain): v2 from one request.
+  assert.equal(await resolveEvmAuthDigestVersion({ rest: 'https://lcd', fetch: node(sw(true)) }), 'v2');
+  assert.equal(calls.length, 1);
+  // Listed and off: v1 whatever the plan says.
+  assert.equal(await resolveEvmAuthDigestVersion({ rest: 'https://lcd', fetch: node(sw(false), '8003746') }), 'v1');
+  // Not listed: the plan decides.
+  assert.equal(await resolveEvmAuthDigestVersion({ rest: 'https://lcd', fetch: node([], '8003746') }), 'v2');
+  // Cannot ask: an error, the plan is never asked.
+  calls.length = 0;
+  await assert.rejects(resolveEvmAuthDigestVersion({ rest: 'https://lcd', fetch: node(503, '8003746') }), /HTTP 503/);
+  await assert.rejects(resolveEvmAuthDigestVersion({ rest: 'https://lcd', fetch: node(new TypeError('fetch failed')) }), /cannot reach/);
+  assert.equal(calls.filter((u) => u.includes('applied_plan')).length, 0);
 });
 
 test('MetaMask builder signs the digest version it is told to', async () => {

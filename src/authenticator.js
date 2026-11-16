@@ -24,6 +24,7 @@
 // personal_sign), so a MetaMask personal_sign will NOT verify — provide the
 // digest to a cosmos-style secp256k1 signer instead.
 
+import { lookupProtocolFeature } from './signbytes.js';
 import {
   toExactBytes, ML_DSA_87_PUBLIC_KEY_LENGTH, ML_DSA_87_SIGNATURE_LENGTH,
 } from './bytes.js';
@@ -123,12 +124,20 @@ export async function evmAuthSignBytesV2({ chainId, account, pubkey, to = '', va
   return sha256(body);
 }
 
+/** The protocol feature switch under which the chain verifies the v2 MsgExecuteEVM digest. */
+export const AA_HARDENING_FEATURE = 'abstractaccount-hardening';
+
 /**
  * resolveEvmAuthDigestVersion returns the MsgExecuteEVM digest the network
- * verifies now: 'v2' once it has applied the v3.2.3 upgrade, 'v1' before. Throws
- * when the node cannot be asked — never guess, the other form is refused.
+ * verifies now. It reads the `abstractaccount-hardening` protocol feature
+ * switch first ('v2' on, 'v1' listed and off) and asks whether the v3.2.3
+ * upgrade is applied only when the node has no answer for the switch (HTTP
+ * 404/501, an empty list, not listed). Throws when the node cannot be asked:
+ * never guess, the other form is refused.
  */
 export async function resolveEvmAuthDigestVersion({ rest, fetch: fetchImpl = globalThis.fetch }) {
+  const state = await lookupProtocolFeature({ rest, name: AA_HARDENING_FEATURE, fetch: fetchImpl });
+  if (state !== 'not-served') return state === 'enabled' ? 'v2' : 'v1';
   const url = `${String(rest).replace(/\/+$/, '')}/cosmos/upgrade/v1beta1/applied_plan/v3.2.3`;
   const res = await fetchImpl(url);
   if (!res.ok) throw new Error(`applied_plan query failed: HTTP ${res.status} from ${url}`);

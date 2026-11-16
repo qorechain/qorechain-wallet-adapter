@@ -149,6 +149,9 @@ export function evmAuthSignBytes(p: { chainId: string; account: string; pubkey: 
 /** The v2 MsgExecuteEVM digest (chain v3.2.3): binds gasLimit, which must be non-zero. */
 export function evmAuthSignBytesV2(p: { chainId: string; account: string; pubkey: Uint8Array; to?: string; value?: string; data?: Uint8Array; nonce: number | bigint; gasLimit: number | bigint }): Promise<Uint8Array>;
 /** 'v2' once the network has applied v3.2.3, 'v1' before. Throws when the node cannot be asked. */
+/** The protocol feature switch under which the chain verifies the v2 MsgExecuteEVM digest. */
+export const AA_HARDENING_FEATURE: 'abstractaccount-hardening';
+/** Reads the abstractaccount-hardening switch first; falls back to the v3.2.3 plan only when the node has no answer for it. */
 export function resolveEvmAuthDigestVersion(p: { rest: string; fetch?: typeof fetch }): Promise<'v1' | 'v2'>;
 /** 32-byte digest an authenticator signs to authorize a MsgExecuteCosmos. */
 export function cosmosAuthSignBytes(p: { chainId: string; account: string; pubkey: Uint8Array; to: string; amount: string; nonce: number | bigint }): Promise<Uint8Array>;
