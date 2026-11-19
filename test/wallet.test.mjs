@@ -144,3 +144,14 @@ test('walletFromSeed refuses the seed itself as pqcSecret', async () => {
   await assert.rejects(walletFromSeed(SEED01, { pqcSecret: SEED01.slice() }), /independent of the seed/);
   await assert.rejects(walletFromSeed(SEED01, { pqcSecret: new Uint8Array(16) }), /32 bytes/);
 });
+
+test('walletFromSeed refuses a recovery code that encodes the seed itself', async () => {
+  const seed = new Uint8Array(32).fill(7);
+  await assert.rejects(
+    walletFromSeed(seed, { recoveryCode: pqcRecoveryCodeFromSecret(seed) }),
+    /encodes the seed itself/,
+  );
+  const other = new Uint8Array(32); other[0] = 1;
+  const w = await walletFromSeed(seed, { recoveryCode: pqcRecoveryCodeFromSecret(other) });
+  assert.ok(w.cosmos.startsWith('qor1'));
+});

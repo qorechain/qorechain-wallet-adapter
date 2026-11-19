@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- The hybrid sign-bytes form and the `MsgExecuteEVM` digest version are read
+  from the network's protocol feature switches first (`pqc-sign-bytes-v2`,
+  `abstractaccount-hardening`), with the applied upgrade plan as the fallback
+  only when the switch list is not served. A network error stops with a clear
+  error instead of falling back silently.
+
+### Fixed
+
+- `walletFromSeed` refuses a recovery code that encodes the seed itself: the
+  PQC key would otherwise follow from the classical key.
+- The canonical PQC derivation used by `rotatePqcKeyMsgFromMnemonic` resolves
+  the account to its lower-case `qor1` form (a `0x` address is accepted) and
+  reads the phrase in one form (NFKD, lower case, single spaces), checked against
+  the English wordlist. A mistyped phrase is refused (`invalid mnemonic`).
+
 ## [0.6.0] - 2026-11-12
 
 Support for chain v3.2.8 (the testnet `qorechain-diana` runs it from 12 November

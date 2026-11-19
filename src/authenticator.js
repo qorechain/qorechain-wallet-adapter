@@ -29,6 +29,9 @@ import {
   toExactBytes, ML_DSA_87_PUBLIC_KEY_LENGTH, ML_DSA_87_SIGNATURE_LENGTH,
 } from './bytes.js';
 import { mldsa, shake256 } from '@qorechain/pqc';
+import { EnglishMnemonic } from '@cosmjs/crypto';
+import { fromBech32 } from '@cosmjs/encoding';
+import { qoreAddresses } from './wallet.js';
 import { requirePossessionProof } from './authenticator-link.js';
 
 // ---- byte helpers (match the chain's binary.BigEndian + length-prefix framing) ----
@@ -338,12 +341,44 @@ export async function buildMetaMaskExecuteCosmos({ provider, address, relayer, c
 const CANONICAL = 'adapter'; // shake256("qorechain:pqc:v1|addr|mnemonic")  (SDK/wallet-adapter)
 const LEGACY = 'bridge';     // shake256(mnemonic)                          (chain-bridge/faucet-api)
 
+/**
+ * Resolve an account to the lower-case `qor1` form the canonical derivation
+ * hashes: a bech32 address in either case, or a `0x` EVM address.
+ */
+export function canonicalAccount(account) {
+  if (typeof account !== 'string') throw new Error('account must be a string');
+  if (/^0x/i.test(account)) return qoreAddresses({ hex: account }).cosmos;
+  const { prefix, data } = fromBech32(account);
+  if (prefix !== 'qor' || data.length !== 20) {
+    throw new Error('account must be a 20-byte qor1 address or a 0x address');
+  }
+  return qoreAddresses({ cosmos: account.toLowerCase() }).cosmos;
+}
+
+/**
+ * The one form of a BIP-39 phrase the canonical derivation hashes: NFKD, lower
+ * case, single spaces, no surrounding whitespace, checked against the English
+ * wordlist and checksum. Throws "invalid mnemonic" without echoing the phrase.
+ */
+export function canonicalMnemonic(mnemonic) {
+  if (typeof mnemonic !== 'string') throw new Error('invalid mnemonic');
+  const phrase = mnemonic.normalize('NFKD').trim().split(/\s+/).join(' ').toLowerCase();
+  try {
+    new EnglishMnemonic(phrase); // validates the words and the checksum
+  } catch {
+    throw new Error('invalid mnemonic');
+  }
+  return phrase;
+}
+
 function derivePqcByScheme(scheme, account, mnemonic) {
   if (scheme === LEGACY || scheme === 'mnemonic-only') {
     return mldsa.keygen(shake256(enc.encode(mnemonic), 32));
   }
   if (scheme === CANONICAL || scheme === '' || scheme === undefined) {
-    return mldsa.keygen(shake256(enc.encode(`qorechain:pqc:v1|${account}|${mnemonic}`), 32));
+    const cosmos = canonicalAccount(account);
+    const phrase = canonicalMnemonic(mnemonic);
+    return mldsa.keygen(shake256(enc.encode(`qorechain:pqc:v1|${cosmos}|${phrase}`), 32));
   }
   throw new Error(`unknown derivation "${scheme}" (use adapter|bridge)`);
 }

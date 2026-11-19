@@ -25,7 +25,7 @@ import { Bip39, Random, Slip10, Slip10Curve, stringToPath, Secp256k1, Keccak256,
 import { toBech32, toHex, fromHex, fromBech32 } from '@cosmjs/encoding';
 import { mldsa, shake256 } from '@qorechain/pqc';
 import { base58Encode } from './phantom.js';
-import { pqcKeyFromRecoveryCode, pqcKeyFromSecret } from './recovery.js';
+import { pqcKeyFromRecoveryCode, pqcKeyFromSecret, recoveryCodeEncodes } from './recovery.js';
 
 // Ethereum HD path (coin-type 60) — makes the 20-byte address the keccak
 // derivation, so the key is EVM-native (spendable via eth_sendRawTransaction).
@@ -154,6 +154,9 @@ export async function walletFromSeed(seed, opts = {}) {
   if (pqcSecret instanceof Uint8Array && pqcSecret.length === privkey.length
       && pqcSecret.every((b, i) => b === privkey[i])) {
     throw new Error('walletFromSeed: pqcSecret must be independent of the seed, not the seed itself');
+  }
+  if (recoveryCode !== undefined && recoveryCodeEncodes(recoveryCode, privkey)) {
+    throw new Error('walletFromSeed: recoveryCode encodes the seed itself; use an independent recovery code');
   }
   const kp = await Secp256k1.makeKeypair(privkey); // validates the scalar is in [1, n-1]
   const uncompressed = kp.pubkey;

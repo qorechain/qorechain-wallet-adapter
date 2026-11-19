@@ -172,6 +172,22 @@ export function pqcRecoveryCodeFromSecret(secret) {
   return encodeSecret(secret);
 }
 
+/**
+ * Internal: whether `code` encodes exactly `bytes` (constant time). Used to
+ * refuse a recovery code that is the classical seed itself.
+ */
+export function recoveryCodeEncodes(code, bytes) {
+  const secret = decodeRecoveryCode(code);
+  try {
+    if (!(bytes instanceof Uint8Array) || bytes.length !== secret.length) return false;
+    let diff = 0;
+    for (let i = 0; i < secret.length; i++) diff |= secret[i] ^ bytes[i];
+    return diff === 0;
+  } finally {
+    secret.fill(0);
+  }
+}
+
 /** True when `code` is a well-formed recovery code with a valid checksum. */
 export function isValidRecoveryCode(code) {
   try {
